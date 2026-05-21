@@ -118,6 +118,7 @@ jobs:
         working-directory: backend
         run: |
           pip install -r requirements.txt
+          pip install -r tests/requirements-test.txt
           pip install pytest pytest-asyncio pytest-cov httpx
 
       # Run Frontend Tests with Coverage

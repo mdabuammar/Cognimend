@@ -52,6 +52,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
+          pip install -r backend/tests/requirements-test.txt
           pip install pytest pytest-cov pytest-asyncio pytest-timeout pytest-xdist httpx
 
       - name: Run unit tests with coverage
@@ -168,6 +169,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
+          pip install -r backend/tests/requirements-test.txt
           pip install pytest pytest-asyncio httpx aiohttp
 
       - name: Wait for services
@@ -252,6 +254,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
+          pip install -r backend/tests/requirements-test.txt
           pip install pytest pytest-asyncio httpx playwright
 
       - name: Install Playwright browsers
@@ -476,6 +479,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
+          pip install -r backend/tests/requirements-test.txt
           pip install schemathesis pytest httpx
 
       - name: Create contract test file

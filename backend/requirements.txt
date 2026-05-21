@@ -40,7 +40,7 @@ scipy==1.11.4
 numpy==1.26.3
 
 # Document Processing
-pypdf==4.0.1
+PyPDF2>=3.0.1
 python-docx==1.1.0
 tiktoken==0.5.2
 

@@ -1,2 +1,3 @@
 """Evaluation service package."""
-# main imported lazily to avoid import issues
+
+from . import main

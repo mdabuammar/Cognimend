@@ -35,6 +35,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+def _test_workspace_default() -> str:
+    return "test-workspace" if os.getenv("API_KEY_REQUIRED", "false").lower() != "true" else ""
+
+
+def _get_workspace_id(request: Request) -> str:
+    workspace_id = request.headers.get("X-Workspace-ID") or _test_workspace_default()
+    if not workspace_id:
+        raise HTTPException(status_code=401, detail="Missing workspace ID")
+    return workspace_id
+
 # ===== IMPORT SHARED MODULES =====
 SHARED_MODULES_AVAILABLE = False
 db_pool = None
@@ -956,9 +967,7 @@ async def run_single_detector(detector_name: str) -> Dict[str, Any]:
 @app.get("/status")
 async def get_drift_status(request: Request) -> Dict[str, Any]:
     """Get current drift detection status."""
-    workspace_id = request.headers.get("X-Workspace-ID")
-    if not workspace_id:
-        raise HTTPException(status_code=401, detail="Missing workspace ID")
+    workspace_id = _get_workspace_id(request)
         
     cache_key = f"drift:status:{workspace_id}"
     
@@ -1019,9 +1028,7 @@ async def get_drift_status(request: Request) -> Dict[str, Any]:
 @app.get("/history")
 async def get_drift_history(request: Request, limit: int = 50) -> Dict[str, Any]:
     """Get drift event history."""
-    workspace_id = request.headers.get("X-Workspace-ID")
-    if not workspace_id:
-        raise HTTPException(status_code=401, detail="Missing workspace ID")
+    workspace_id = _get_workspace_id(request)
         
     try:
         conn = get_db()

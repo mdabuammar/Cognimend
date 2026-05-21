@@ -88,7 +88,7 @@ class CacheKeyGenerator:
     """Generates cache keys for queries."""
     
     @staticmethod
-    def generate(question: str, top_k: int, workspace_id: str, algorithm: str = "md5") -> str:
+    def generate(question: str, top_k: int, workspace_id: str = "default", algorithm: str = "md5") -> str:
         """
         Generate cache key for a query.
         
@@ -339,7 +339,7 @@ class QueryProcessor:
         self,
         question: str,
         top_k: int,
-        workspace_id: str
+        workspace_id: str = "default"
     ) -> Optional[QueryResult]:
         """
         Check if result is cached.
@@ -370,8 +370,8 @@ class QueryProcessor:
         self,
         question: str,
         top_k: int,
-        workspace_id: str,
         result: QueryResult,
+        workspace_id: str = "default",
         ttl_seconds: int = 7200
     ) -> None:
         """
@@ -517,7 +517,7 @@ Always cite which document you're referencing."""
     async def process(
         self,
         question: str,
-        workspace_id: str,
+        workspace_id: str = "default",
         top_k: int = 3,
         use_cache: bool = True,
         min_similarity: float = 0.0
@@ -583,7 +583,7 @@ Always cite which document you're referencing."""
         
         # Cache result
         if use_cache:
-            await self.cache_result(question, top_k, workspace_id, result)
+            await self.cache_result(question, top_k, result, workspace_id)
         
         return result
     

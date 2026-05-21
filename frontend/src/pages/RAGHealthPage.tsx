@@ -74,6 +74,37 @@ interface QualityCardProps {
   delay?: number;
 }
 
+interface RepairCandidate {
+  id: number;
+  status?: string;
+  drift_type?: string;
+  created_at: string;
+  tested_at?: string | null;
+  applied_at?: string | null;
+  repair_actions_json?: string[];
+  expected_improvement?: number;
+}
+
+interface QualityEvent {
+  title: string;
+  description: string;
+  created_at?: string | null;
+  type?: string;
+}
+
+interface ConfigVersion {
+  id: number | string;
+  status?: string;
+  created_at: string;
+  created_reason?: string;
+}
+
+interface DriftStatus {
+  retrieval_drift?: {
+    status?: string;
+  };
+}
+
 function QualityCard({ icon, title, subtitle, score, suffix = "%", description, trend, delay = 0 }: QualityCardProps) {
   const scoreColor =
     score === null ? "text-slate-400"
@@ -244,7 +275,7 @@ function AddQuestionModal({ onClose }: { onClose: () => void }) {
 
 // ========== SYSTEM QUALITY ACTION CARD ==========
 interface RepairCardProps {
-  cand: any;
+  cand: RepairCandidate;
   onTest: () => void;
   onApply: () => void;
   onReject: () => void;
@@ -439,7 +470,7 @@ export default function RAGHealthPage() {
   }> = [];
 
   if (ragQuality.data?.recent_quality_events) {
-    ragQuality.data.recent_quality_events.forEach((evt: any) => {
+    ragQuality.data.recent_quality_events.forEach((evt: QualityEvent) => {
       if (!evt.created_at) return;
       timelineEvents.push({
         title: evt.title,
@@ -452,7 +483,7 @@ export default function RAGHealthPage() {
 
   // Config Rollbacks
   if (configHistoryData?.versions) {
-    configHistoryData.versions.forEach((v: any) => {
+    configHistoryData.versions.forEach((v: ConfigVersion) => {
       if (v.status === "rolled_back") {
         timelineEvents.push({
           title: "Stable Setting Restored",
@@ -473,7 +504,7 @@ export default function RAGHealthPage() {
 
   // Repair Candidate Actions
   if (candidatesData?.candidates) {
-    candidatesData.candidates.forEach((c: any) => {
+    candidatesData.candidates.forEach((c: RepairCandidate) => {
       if (c.status === "rejected" || c.status === "failed") {
         timelineEvents.push({
           title: "Repair Tested & Rejected",
@@ -500,7 +531,7 @@ export default function RAGHealthPage() {
   if (score < 85) {
     recommendations.push("Validate quality gains on the latest auto-fix candidates below.");
   }
-  if ((driftData as any)?.retrieval_drift?.status === "detected") {
+  if ((driftData as DriftStatus)?.retrieval_drift?.status === "detected") {
     recommendations.push("Upload new documents to update the semantic index matching query intents.");
   }
   if (faithData.data?.avg_faithfulness_score && faithData.data.avg_faithfulness_score < 0.8) {
@@ -694,7 +725,7 @@ export default function RAGHealthPage() {
               </div>
             ) : (
               <div className="space-y-4">
-                {candidatesData.candidates.map((cand: any) => (
+                {candidatesData.candidates.map((cand: RepairCandidate) => (
                   <RepairCandidateCard
                     key={cand.id}
                     cand={cand}
@@ -750,7 +781,7 @@ export default function RAGHealthPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/[0.04]">
-                  {(configHistoryData?.versions || []).map((v: any) => (
+                  {(configHistoryData?.versions || []).map((v: ConfigVersion) => (
                     <tr key={v.id} className="hover:bg-white/[0.01] transition-colors">
                       <td className="px-4 py-3 font-semibold">
                         <span className={cn("px-2 py-0.5 rounded-full border text-[10px] font-bold",

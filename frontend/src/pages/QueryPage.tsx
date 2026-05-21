@@ -85,6 +85,14 @@ interface Citation {
   is_latest_relevant_source?: boolean;
 }
 
+interface QueryDocument {
+  document_id?: number | string;
+  id?: number | string;
+  title?: string;
+  filename?: string;
+  created_at?: string | null;
+}
+
 function UserMessage({ msg }: { msg: Message }) {
   return (
     <div className="flex justify-end">
@@ -673,15 +681,16 @@ export default function QueryPage() {
   }, [messages]);
 
   // Find the latest uploaded document
-  const latestDoc = docs && docs.length > 0 ? docs.reduce((latest: any, current: any) => {
+  const documents = docs as QueryDocument[];
+  const latestDoc = documents.length > 0 ? documents.reduce((latest, current) => {
     if (!latest.created_at) return current;
     if (!current.created_at) return latest;
     return new Date(current.created_at) > new Date(latest.created_at) ? current : latest;
-  }, docs[0]) : null;
+  }, documents[0]) : null;
   const latestDocId = latestDoc ? (latestDoc.document_id ?? latestDoc.id) : null;
 
-  const getDocMetadata = (docId: number) => {
-    const d = docs.find((x: any) => (x.document_id ?? x.id) === docId);
+  const getDocMetadata = (docId: number | string) => {
+    const d = documents.find((x) => (x.document_id ?? x.id) === docId);
     if (!d) return null;
     return {
       title: d.title,

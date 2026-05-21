@@ -1,5 +1,5 @@
 import React from "react";
-import { Mail, MessageSquare, Globe, Phone } from "lucide-react";
+import { Mail, MessageSquare, Globe, Phone, type LucideIcon } from "lucide-react";
 
 export default function ContactPage() {
   return (
@@ -47,7 +47,7 @@ export default function ContactPage() {
   );
 }
 
-function ContactInfo({ icon: Icon, label, value }: any) {
+function ContactInfo({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string }) {
   return (
     <div className="flex items-center gap-6 p-6 bg-white/[0.02] border border-white/[0.05] rounded-3xl group hover:bg-white/[0.04] transition-all">
       <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 flex items-center justify-center text-indigo-400 group-hover:scale-110 transition-transform">

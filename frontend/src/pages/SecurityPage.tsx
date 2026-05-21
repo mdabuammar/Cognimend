@@ -1,5 +1,5 @@
 import React from "react";
-import { ShieldCheck, Lock, Eye, ShieldAlert } from "lucide-react";
+import { ShieldCheck, Lock, Eye, ShieldAlert, type LucideIcon } from "lucide-react";
 import { Link } from "react-router-dom";
 
 export default function SecurityPage() {
@@ -45,7 +45,7 @@ export default function SecurityPage() {
   );
 }
 
-function SecurityCard({ title, desc, icon: Icon }: any) {
+function SecurityCard({ title, desc, icon: Icon }: { title: string; desc: string; icon: LucideIcon }) {
   return (
     <div className="p-8 bg-white/[0.03] border border-white/[0.08] rounded-3xl">
       <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 flex items-center justify-center mb-6 text-indigo-400">

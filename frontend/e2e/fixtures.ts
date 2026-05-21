@@ -15,7 +15,7 @@ interface TestFixtures {
 // Extend base test with custom fixtures
 export const test = base.extend<TestFixtures>({
   // Authenticated page fixture - logs in before each test
-  authenticatedPage: async ({ page }, use) => {
+  authenticatedPage: async ({ page }, runFixture) => {
     // Navigate to login
     await page.goto('/login');
     
@@ -30,7 +30,7 @@ export const test = base.extend<TestFixtures>({
     await page.waitForURL(/\/(dashboard|home|\/)/, { timeout: 10000 });
     
     // Use the authenticated page
-    await use(page);
+    await runFixture(page);
     
     // Cleanup: logout after test
     try {
@@ -41,7 +41,7 @@ export const test = base.extend<TestFixtures>({
   },
 
   // Mock API fixture - sets up API mocking
-  mockAPI: async ({ page }, use) => {
+  mockAPI: async ({ page }, runFixture) => {
     // Intercept and mock API calls
     await page.route('**/api/**', async (route) => {
       const url = route.request().url();
@@ -74,7 +74,7 @@ export const test = base.extend<TestFixtures>({
       }
     });
     
-    await use();
+    await runFixture();
   },
 });
 

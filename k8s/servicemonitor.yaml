@@ -1,0 +1,327 @@
+# =============================================================================
+# ServiceMonitor and PodMonitor Resources for Prometheus Operator
+# Enables automatic metric collection from RAG system services
+# =============================================================================
+
+---
+# =============================================================================
+# ServiceMonitor: Query Service
+# High-traffic service - primary monitoring target
+# =============================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: query-service-monitor
+  namespace: cognimend
+  labels:
+    app: query-service
+    release: prometheus
+    app.kubernetes.io/name: query
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: cognimend
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: query
+      app.kubernetes.io/component: api
+  namespaceSelector:
+    matchNames:
+      - cognimend
+  endpoints:
+    - port: metrics
+      path: /metrics/prometheus
+      interval: 30s
+      scrapeTimeout: 10s
+      scheme: http
+      honorLabels: true
+      metricRelabelings:
+        - sourceLabels: [__name__]
+          regex: 'go_.*'
+          action: drop
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: pod
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: namespace
+        - sourceLabels: [__meta_kubernetes_service_name]
+          targetLabel: service
+
+---
+# =============================================================================
+# ServiceMonitor: Upload Service
+# Document ingestion monitoring
+# =============================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: upload-service-monitor
+  namespace: cognimend
+  labels:
+    app: upload-service
+    release: prometheus
+    app.kubernetes.io/name: upload
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: cognimend
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: upload
+      app.kubernetes.io/component: api
+  namespaceSelector:
+    matchNames:
+      - cognimend
+  endpoints:
+    - port: metrics
+      path: /metrics/prometheus
+      interval: 30s
+      scrapeTimeout: 10s
+      scheme: http
+      honorLabels: true
+      metricRelabelings:
+        - sourceLabels: [__name__]
+          regex: 'go_.*'
+          action: drop
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: pod
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: namespace
+        - sourceLabels: [__meta_kubernetes_service_name]
+          targetLabel: service
+
+---
+# =============================================================================
+# ServiceMonitor: Telemetry Service
+# Internal metrics and observability service
+# =============================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: telemetry-service-monitor
+  namespace: cognimend
+  labels:
+    app: telemetry-service
+    release: prometheus
+    app.kubernetes.io/name: telemetry
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: cognimend
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: telemetry
+      app.kubernetes.io/component: api
+  namespaceSelector:
+    matchNames:
+      - cognimend
+  endpoints:
+    - port: metrics
+      path: /metrics/prometheus
+      interval: 30s
+      scrapeTimeout: 10s
+      scheme: http
+      honorLabels: true
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: pod
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: namespace
+        - sourceLabels: [__meta_kubernetes_service_name]
+          targetLabel: service
+
+---
+# =============================================================================
+# ServiceMonitor: Drift Detector Service
+# ML model drift monitoring
+# =============================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: drift-detector-service-monitor
+  namespace: cognimend
+  labels:
+    app: drift-detector-service
+    release: prometheus
+    app.kubernetes.io/name: drift-detector
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: cognimend
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: drift-detector
+      app.kubernetes.io/component: ml
+  namespaceSelector:
+    matchNames:
+      - cognimend
+  endpoints:
+    - port: metrics
+      path: /metrics/prometheus
+      interval: 30s
+      scrapeTimeout: 10s
+      scheme: http
+      honorLabels: true
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: pod
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: namespace
+        - sourceLabels: [__meta_kubernetes_service_name]
+          targetLabel: service
+
+---
+# =============================================================================
+# ServiceMonitor: Controller Service
+# Orchestration service monitoring
+# =============================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: controller-service-monitor
+  namespace: cognimend
+  labels:
+    app: controller-service
+    release: prometheus
+    app.kubernetes.io/name: controller
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: cognimend
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: controller
+      app.kubernetes.io/component: orchestration
+  namespaceSelector:
+    matchNames:
+      - cognimend
+  endpoints:
+    - port: metrics
+      path: /metrics/prometheus
+      interval: 30s
+      scrapeTimeout: 10s
+      scheme: http
+      honorLabels: true
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: pod
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: namespace
+        - sourceLabels: [__meta_kubernetes_service_name]
+          targetLabel: service
+
+---
+# =============================================================================
+# ServiceMonitor: Evaluation Service
+# RAG evaluation metrics
+# =============================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: evaluation-service-monitor
+  namespace: cognimend
+  labels:
+    app: evaluation-service
+    release: prometheus
+    app.kubernetes.io/name: evaluation
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: cognimend
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: evaluation
+      app.kubernetes.io/component: ml
+  namespaceSelector:
+    matchNames:
+      - cognimend
+  endpoints:
+    - port: metrics
+      path: /metrics/prometheus
+      interval: 30s
+      scrapeTimeout: 10s
+      scheme: http
+      honorLabels: true
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: pod
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: namespace
+        - sourceLabels: [__meta_kubernetes_service_name]
+          targetLabel: service
+
+---
+# =============================================================================
+# PodMonitor: All Application Pods
+# Collects pod-level metrics from all services in namespace
+# =============================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: cognimend-pod-monitor
+  namespace: cognimend
+  labels:
+    app: cognimend
+    release: prometheus
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: cognimend
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: cognimend
+  namespaceSelector:
+    matchNames:
+      - cognimend
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics/prometheus
+      interval: 30s
+      scrapeTimeout: 10s
+      scheme: http
+      honorLabels: true
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: pod
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: namespace
+        - sourceLabels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+          targetLabel: service
+        - sourceLabels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+          targetLabel: component
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node
+
+---
+# =============================================================================
+# PodMonitor: Database Pods
+# Collects metrics from PostgreSQL, Qdrant, Redis
+# =============================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: database-pod-monitor
+  namespace: cognimend
+  labels:
+    app: cognimend-databases
+    release: prometheus
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: cognimend
+spec:
+  selector:
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values:
+          - database
+          - cache
+  namespaceSelector:
+    matchNames:
+      - cognimend
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+      scheme: http
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: pod
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: namespace
+        - sourceLabels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+          targetLabel: database

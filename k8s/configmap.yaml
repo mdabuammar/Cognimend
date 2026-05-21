@@ -1,0 +1,85 @@
+# =============================================================================
+# ConfigMap - Environment Variables for all services
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cognimend-config
+  namespace: cognimend
+  labels:
+    app.kubernetes.io/name: cognimend
+    app.kubernetes.io/component: config
+data:
+  # =============================================================================
+  # Application Settings
+  # =============================================================================
+  ENVIRONMENT: "production"
+  LOG_LEVEL: "INFO"
+  DEBUG: "false"
+  
+  # =============================================================================
+  # Database Configuration
+  # =============================================================================
+  POSTGRES_HOST: "postgres"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "cognimend"
+  POSTGRES_USER: "cognimend"
+  
+  # =============================================================================
+  # Qdrant Configuration
+  # =============================================================================
+  QDRANT_HOST: "qdrant"
+  QDRANT_PORT: "6333"
+  QDRANT_GRPC_PORT: "6334"
+  QDRANT_COLLECTION: "documents"
+  
+  # =============================================================================
+  # Redis Configuration
+  # =============================================================================
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  
+  # =============================================================================
+  # Service URLs (Internal)
+  # =============================================================================
+  UPLOAD_SERVICE_URL: "http://upload:8001"
+  QUERY_SERVICE_URL: "http://query:8002"
+  TELEMETRY_SERVICE_URL: "http://telemetry:8003"
+  DRIFT_DETECTOR_SERVICE_URL: "http://drift-detector:8004"
+  CONTROLLER_SERVICE_URL: "http://controller:8005"
+  EVALUATION_SERVICE_URL: "http://evaluation:8006"
+  
+  # =============================================================================
+  # Security Settings
+  # =============================================================================
+  API_KEY_REQUIRED: "true"
+  RATE_LIMIT_ENABLED: "true"
+  RATE_LIMIT_REQUESTS: "100"
+  RATE_LIMIT_WINDOW_SECONDS: "60"
+  CORS_ORIGINS: "https://cognimend.example.com"
+  
+  # =============================================================================
+  # Performance Settings
+  # =============================================================================
+  MAX_UPLOAD_SIZE_MB: "50"
+  QUERY_TIMEOUT_SECONDS: "30"
+  CACHE_TTL_SECONDS: "300"
+  CONNECTION_POOL_SIZE: "20"
+  
+  # =============================================================================
+  # Monitoring Settings
+  # =============================================================================
+  ENABLE_METRICS: "true"
+  METRICS_PORT: "9090"
+  ENABLE_TRACING: "true"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger-collector:4317"
+  
+  # =============================================================================
+  # OpenRouter/LLM Settings
+  # =============================================================================
+  OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1"
+  OPENROUTER_MODEL: "openai/gpt-4-turbo-preview"
+  OPENROUTER_PRESET: "balanced"
+  EMBEDDING_MODEL: "text-embedding-3-small"
+  EMBEDDING_DIMENSIONS: "1536"

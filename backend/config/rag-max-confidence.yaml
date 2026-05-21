@@ -1,0 +1,22 @@
+# UNIVERSAL HIGH-CONFIDENCE RAG CONFIG
+rag:
+  chunk_size: 300              # Perfect for technical papers
+  chunk_overlap: 75            # 25% overlap maintains context
+  top_k: 10                    # More chunks = better context
+  similarity_threshold: 0.72   # Filter poor matches
+  
+advanced:
+  query_rewrite: true          # "main objective" → full sentence
+  multi_query: true            # Generate 3 query variations
+  rerank: true                 # LLM re-ranks chunks
+  confidence_method: "self_certainty"  # Best scoring method
+  
+models:
+  embedding: "text-embedding-3-small"  # Superior semantic understanding
+  llm_primary: "qwen2.5-coder:7b"      # Technical specialist
+  llm_rerank: "llama3.1:8b"           # Reranking specialist
+  
+prompts:
+  system: |
+    "You are a precise research assistant. Answer ONLY from provided context. 
+     Be specific. Cite sources. If unsure, say 'Not enough information'."

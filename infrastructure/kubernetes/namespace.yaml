@@ -1,0 +1,40 @@
+# DriftGuard Kubernetes Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: driftguard
+  labels:
+    app: driftguard
+    environment: production
+---
+# Resource Quotas for the namespace
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: driftguard-quota
+  namespace: driftguard
+spec:
+  hard:
+    requests.cpu: "50"
+    requests.memory: 100Gi
+    limits.cpu: "100"
+    limits.memory: 200Gi
+    pods: "200"
+    services: "50"
+    persistentvolumeclaims: "50"
+---
+# Limit Ranges for default container limits
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: driftguard-limits
+  namespace: driftguard
+spec:
+  limits:
+  - default:
+      cpu: "500m"
+      memory: "512Mi"
+    defaultRequest:
+      cpu: "100m"
+      memory: "128Mi"
+    type: Container

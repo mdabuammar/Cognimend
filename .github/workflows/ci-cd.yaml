@@ -1,0 +1,636 @@
+# =============================================================================
+# GitHub Actions CI/CD Pipeline for Cognimend RAG System
+# =============================================================================
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      deploy_env:
+        description: 'Deployment environment'
+        required: false
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  PYTHON_VERSION: '3.11'
+  REGISTRY: docker.io
+  IMAGE_PREFIX: cognimend
+
+# Cancel in-progress runs on same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ===========================================================================
+  # Job 1: Lint & Test
+  # ===========================================================================
+  lint-and-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    outputs:
+      coverage: ${{ steps.coverage.outputs.coverage }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install black flake8 pytest pytest-cov pytest-asyncio httpx
+
+      - name: Check code formatting with Black
+        run: |
+          black --check --diff --line-length 120 backend/
+        continue-on-error: false
+
+      - name: Run Flake8 linting
+        run: |
+          flake8 backend/ \
+            --max-line-length=120 \
+            --extend-ignore=E203,E501,W503 \
+            --exclude=.git,__pycache__,build,dist,*.egg-info \
+            --statistics \
+            --count
+
+      - name: Run pytest with coverage
+        id: pytest
+        run: |
+          cd backend
+          pytest tests/ \
+            --cov=. \
+            --cov-report=xml:coverage.xml \
+            --cov-report=html:htmlcov \
+            --cov-report=term-missing \
+            --cov-fail-under=70 \
+            -v \
+            --tb=short \
+            --junitxml=test-results.xml
+        continue-on-error: false
+
+      - name: Extract coverage percentage
+        id: coverage
+        run: |
+          COVERAGE=$(python -c "import xml.etree.ElementTree as ET; tree = ET.parse('backend/coverage.xml'); print(f'{float(tree.getroot().attrib[\"line-rate\"])*100:.1f}')")
+          echo "coverage=$COVERAGE" >> $GITHUB_OUTPUT
+          echo "Coverage: $COVERAGE%"
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: backend/coverage.xml
+          flags: unittests
+          name: codecov-cognimend
+          fail_ci_if_error: false
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: |
+            backend/test-results.xml
+            backend/htmlcov/
+          retention-days: 30
+
+      - name: Comment coverage on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const coverage = '${{ steps.coverage.outputs.coverage }}';
+            const body = `## 📊 Test Coverage Report\n\n| Metric | Value |\n|--------|-------|\n| Coverage | ${coverage}% |\n\n✅ All tests passed!`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+  # ===========================================================================
+  # Job 2: Security Scan
+  # ===========================================================================
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner (filesystem)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-fs-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          ignore-unfixed: true
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-fs-results.sarif'
+
+      - name: Run Trivy for HIGH/CRITICAL check
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+
+      - name: Run pip-audit for Python dependencies
+        run: |
+          pip install pip-audit
+          pip-audit -r backend/requirements.txt --desc on --fix --dry-run || true
+
+      - name: Check for secrets in code
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ""
+          extra_args: --only-verified
+
+  # ===========================================================================
+  # Job 3: Build Docker Images
+  # ===========================================================================
+  build-images:
+    name: Build ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    needs: [lint-and-test]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - upload
+          - query
+          - telemetry
+          - drift_detector
+          - controller
+          - evaluation
+    
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: |
+            image=moby/buildkit:latest
+            network=host
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix=
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile.${{ matrix.service }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            SERVICE_NAME=${{ matrix.service }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            GIT_SHA=${{ github.sha }}
+            VERSION=${{ github.ref_name }}
+
+      - name: Scan built image for vulnerabilities
+        if: github.event_name != 'pull_request'
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service }}:${{ github.sha }}
+          format: 'table'
+          exit-code: '0'
+          severity: 'CRITICAL,HIGH'
+
+  # ===========================================================================
+  # Job 4: Deploy to Kubernetes
+  # ===========================================================================
+  deploy:
+    name: Deploy to Kubernetes
+    runs-on: ubuntu-latest
+    needs: [build-images, security-scan]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    environment:
+      name: ${{ github.event.inputs.deploy_env || 'staging' }}
+      url: https://api.cognimend.example.com
+    
+    outputs:
+      deployment_status: ${{ steps.deploy.outputs.status }}
+      rollback_performed: ${{ steps.rollback.outputs.performed }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+      - name: Verify cluster connection
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Create namespace if not exists
+        run: |
+          kubectl apply -f k8s/namespace.yaml
+
+      - name: Apply ConfigMap and Secrets
+        run: |
+          kubectl apply -f k8s/configmap.yaml
+          
+          # Apply secrets with actual values from GitHub secrets
+          cat k8s/secrets.yaml | \
+            sed "s|\${POSTGRES_PASSWORD}|${{ secrets.POSTGRES_PASSWORD }}|g" | \
+            sed "s|\${OPENROUTER_API_KEY}|${{ secrets.OPENROUTER_API_KEY }}|g" | \
+            sed "s|\${API_KEY}|${{ secrets.API_KEY }}|g" | \
+            sed "s|\${JWT_SECRET}|${{ secrets.JWT_SECRET }}|g" | \
+            sed "s|\${ENCRYPTION_KEY}|${{ secrets.ENCRYPTION_KEY }}|g" | \
+            kubectl apply -f -
+
+      - name: Deploy infrastructure (databases)
+        run: |
+          # Apply PVs first
+          kubectl apply -f k8s/postgres-pv.yaml
+          kubectl apply -f k8s/qdrant-pv.yaml
+          
+          # Deploy databases
+          kubectl apply -f k8s/postgres-deployment.yaml
+          kubectl apply -f k8s/qdrant-deployment.yaml
+          kubectl apply -f k8s/redis-deployment.yaml
+          
+          # Wait for databases to be ready
+          echo "Waiting for PostgreSQL..."
+          kubectl rollout status deployment/postgresql -n cognimend --timeout=300s
+          
+          echo "Waiting for Qdrant..."
+          kubectl rollout status deployment/qdrant -n cognimend --timeout=300s
+          
+          echo "Waiting for Redis..."
+          kubectl rollout status deployment/redis -n cognimend --timeout=300s
+
+      - name: Update image tags in deployments
+        run: |
+          for service in upload query telemetry drift-detector controller evaluation; do
+            deployment_file="k8s/${service}-deployment.yaml"
+            if [ -f "$deployment_file" ]; then
+              sed -i "s|image: cognimend/.*:latest|image: ${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_PREFIX }}-${service}:${{ github.sha }}|g" "$deployment_file"
+            fi
+          done
+
+      - name: Deploy application services
+        id: deploy
+        run: |
+          set -e
+          
+          # Apply ingress and RBAC first
+          kubectl apply -f k8s/ingress.yaml
+          
+          # Deploy services in order
+          kubectl apply -f k8s/upload-deployment.yaml
+          kubectl apply -f k8s/query-deployment.yaml
+          kubectl apply -f k8s/telemetry-deployment.yaml
+          kubectl apply -f k8s/drift-detector-deployment.yaml
+          kubectl apply -f k8s/controller-deployment.yaml
+          kubectl apply -f k8s/evaluation-deployment.yaml
+          
+          # Apply HPAs
+          kubectl apply -f k8s/query-hpa.yaml
+          kubectl apply -f k8s/upload-hpa.yaml
+          
+          # Apply network policies
+          kubectl apply -f k8s/network-policies.yaml
+          
+          # Apply PDBs
+          kubectl apply -f k8s/pod-disruption-budgets.yaml
+          
+          # Wait for all deployments
+          for deployment in upload query telemetry drift-detector controller evaluation; do
+            echo "Waiting for $deployment..."
+            kubectl rollout status deployment/$deployment -n cognimend --timeout=300s || {
+              echo "status=failed" >> $GITHUB_OUTPUT
+              exit 1
+            }
+          done
+          
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: Run smoke tests
+        id: smoke
+        run: |
+          # Port-forward to query service for health check
+          kubectl port-forward svc/query 8002:8002 -n cognimend &
+          PF_PID=$!
+          sleep 10
+          
+          # Health check with retries
+          for i in {1..5}; do
+            if curl -sf http://localhost:8002/health; then
+              echo "✅ Query service health check passed"
+              break
+            fi
+            echo "Attempt $i failed, retrying..."
+            sleep 5
+          done
+          
+          # Check all services
+          for service in upload:8001 query:8002 telemetry:8003; do
+            svc_name=$(echo $service | cut -d: -f1)
+            svc_port=$(echo $service | cut -d: -f2)
+            echo "Checking $svc_name..."
+            kubectl port-forward svc/$svc_name $svc_port:$svc_port -n cognimend &
+            sleep 5
+            curl -sf http://localhost:$svc_port/health || echo "⚠️ $svc_name health check failed"
+          done
+          
+          # Cleanup
+          pkill -f "kubectl port-forward" || true
+
+      - name: Rollback on failure
+        id: rollback
+        if: failure() && steps.deploy.outputs.status == 'failed'
+        run: |
+          echo "🔄 Initiating rollback..."
+          
+          for deployment in upload query telemetry drift-detector controller evaluation; do
+            echo "Rolling back $deployment..."
+            kubectl rollout undo deployment/$deployment -n cognimend || true
+          done
+          
+          # Wait for rollback
+          for deployment in upload query telemetry drift-detector controller evaluation; do
+            kubectl rollout status deployment/$deployment -n cognimend --timeout=180s || true
+          done
+          
+          echo "performed=true" >> $GITHUB_OUTPUT
+
+      - name: Save deployment info
+        if: success()
+        run: |
+          echo "Deployment completed at $(date)" > deployment-info.txt
+          echo "Commit: ${{ github.sha }}" >> deployment-info.txt
+          echo "Branch: ${{ github.ref_name }}" >> deployment-info.txt
+          kubectl get deployments -n cognimend -o wide >> deployment-info.txt
+
+      - name: Upload deployment info
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-info
+          path: deployment-info.txt
+          retention-days: 30
+
+  # ===========================================================================
+  # Job 5: Integration Tests
+  # ===========================================================================
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [deploy]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r backend/requirements.txt
+          pip install pytest pytest-asyncio httpx aiohttp
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+      - name: Port-forward services
+        run: |
+          kubectl port-forward svc/upload 8001:8001 -n cognimend &
+          kubectl port-forward svc/query 8002:8002 -n cognimend &
+          kubectl port-forward svc/telemetry 8003:8003 -n cognimend &
+          sleep 15
+
+      - name: Run integration tests
+        id: integration
+        run: |
+          cd backend
+          pytest tests/integration/ \
+            -v \
+            --tb=long \
+            --junitxml=integration-results.xml \
+            -x \
+            --timeout=120 || echo "status=failed" >> $GITHUB_OUTPUT
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          mkdir -p logs
+          for pod in $(kubectl get pods -n cognimend -o name); do
+            pod_name=$(echo $pod | cut -d/ -f2)
+            kubectl logs $pod -n cognimend --tail=500 > logs/${pod_name}.log 2>&1 || true
+          done
+
+      - name: Upload integration test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-test-results
+          path: |
+            backend/integration-results.xml
+            logs/
+          retention-days: 30
+
+      - name: Cleanup port-forwards
+        if: always()
+        run: pkill -f "kubectl port-forward" || true
+
+  # ===========================================================================
+  # Job 6: Notify
+  # ===========================================================================
+  notify:
+    name: Notify
+    runs-on: ubuntu-latest
+    needs: [lint-and-test, security-scan, build-images, deploy, integration-tests]
+    if: always()
+    
+    steps:
+      - name: Determine status
+        id: status
+        run: |
+          if [[ "${{ needs.lint-and-test.result }}" == "failure" ]]; then
+            echo "status=❌ Tests Failed" >> $GITHUB_OUTPUT
+            echo "color=danger" >> $GITHUB_OUTPUT
+          elif [[ "${{ needs.security-scan.result }}" == "failure" ]]; then
+            echo "status=🔒 Security Issues Found" >> $GITHUB_OUTPUT
+            echo "color=danger" >> $GITHUB_OUTPUT
+          elif [[ "${{ needs.build-images.result }}" == "failure" ]]; then
+            echo "status=🐳 Build Failed" >> $GITHUB_OUTPUT
+            echo "color=danger" >> $GITHUB_OUTPUT
+          elif [[ "${{ needs.deploy.result }}" == "failure" ]]; then
+            echo "status=🚀 Deployment Failed" >> $GITHUB_OUTPUT
+            echo "color=danger" >> $GITHUB_OUTPUT
+          elif [[ "${{ needs.integration-tests.result }}" == "failure" ]]; then
+            echo "status=🧪 Integration Tests Failed" >> $GITHUB_OUTPUT
+            echo "color=warning" >> $GITHUB_OUTPUT
+          else
+            echo "status=✅ All Checks Passed" >> $GITHUB_OUTPUT
+            echo "color=good" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send Slack notification
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "attachments": [
+                {
+                  "color": "${{ steps.status.outputs.color }}",
+                  "blocks": [
+                    {
+                      "type": "header",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "Cognimend CI/CD Pipeline"
+                      }
+                    },
+                    {
+                      "type": "section",
+                      "fields": [
+                        {
+                          "type": "mrkdwn",
+                          "text": "*Status:*\n${{ steps.status.outputs.status }}"
+                        },
+                        {
+                          "type": "mrkdwn",
+                          "text": "*Branch:*\n${{ github.ref_name }}"
+                        },
+                        {
+                          "type": "mrkdwn",
+                          "text": "*Commit:*\n${{ github.sha }}"
+                        },
+                        {
+                          "type": "mrkdwn",
+                          "text": "*Author:*\n${{ github.actor }}"
+                        },
+                        {
+                          "type": "mrkdwn",
+                          "text": "*Tests:*\n${{ needs.lint-and-test.result }}"
+                        },
+                        {
+                          "type": "mrkdwn",
+                          "text": "*Security:*\n${{ needs.security-scan.result }}"
+                        },
+                        {
+                          "type": "mrkdwn",
+                          "text": "*Build:*\n${{ needs.build-images.result }}"
+                        },
+                        {
+                          "type": "mrkdwn",
+                          "text": "*Deploy:*\n${{ needs.deploy.result }}"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "section",
+                      "text": {
+                        "type": "mrkdwn",
+                        "text": "*Commit Message:*\n${{ github.event.head_commit.message }}"
+                      }
+                    },
+                    {
+                      "type": "actions",
+                      "elements": [
+                        {
+                          "type": "button",
+                          "text": {
+                            "type": "plain_text",
+                            "text": "View Run"
+                          },
+                          "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK

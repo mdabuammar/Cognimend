@@ -1,0 +1,538 @@
+# =============================================================================
+# PrometheusRule: Alerting Rules for Cognimend RAG System
+# =============================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cognimend-alerts
+  namespace: cognimend
+  labels:
+    app: cognimend
+    release: prometheus
+    app.kubernetes.io/name: cognimend
+    app.kubernetes.io/component: alerting
+    app.kubernetes.io/part-of: cognimend
+    prometheus: kube-prometheus
+    role: alert-rules
+spec:
+  groups:
+    # =========================================================================
+    # Critical Alerts - Immediate Action Required
+    # =========================================================================
+    - name: cognimend.critical
+      interval: 30s
+      rules:
+        # ---------------------------------------------------------------------
+        # High Error Rate
+        # ---------------------------------------------------------------------
+        - alert: HighErrorRate
+          expr: |
+            (
+              sum(rate(rag_queries_total{namespace="cognimend", status="error"}[5m]))
+              /
+              sum(rate(rag_queries_total{namespace="cognimend"}[5m]))
+            ) * 100 > 5
+          for: 2m
+          labels:
+            severity: critical
+            team: platform
+            service: rag
+          annotations:
+            summary: "High error rate detected in RAG system"
+            description: |
+              Error rate is {{ $value | printf "%.2f" }}% (threshold: 5%)
+              Service: {{ $labels.service }}
+              Namespace: {{ $labels.namespace }}
+            impact: "Users experiencing query failures"
+            runbook_url: "https://wiki.example.com/runbooks/rag-high-error-rate"
+            dashboard_url: "https://grafana.example.com/d/cognimend-rag-dashboard"
+
+        # ---------------------------------------------------------------------
+        # Service Down - No Replicas Available
+        # ---------------------------------------------------------------------
+        - alert: ServiceDown
+          expr: |
+            kube_deployment_status_replicas_available{namespace="cognimend"} == 0
+          for: 1m
+          labels:
+            severity: critical
+            team: platform
+            service: "{{ $labels.deployment }}"
+          annotations:
+            summary: "Service {{ $labels.deployment }} has no available replicas"
+            description: |
+              Deployment {{ $labels.deployment }} in namespace {{ $labels.namespace }}
+              has 0 available replicas for more than 1 minute.
+            impact: "Service completely unavailable"
+            runbook_url: "https://wiki.example.com/runbooks/rag-service-down"
+            resolution: |
+              1. Check pod status: kubectl get pods -n cognimend -l app.kubernetes.io/name={{ $labels.deployment }}
+              2. Check pod logs: kubectl logs -n cognimend -l app.kubernetes.io/name={{ $labels.deployment }}
+              3. Check events: kubectl get events -n cognimend --sort-by='.lastTimestamp'
+
+        # ---------------------------------------------------------------------
+        # PostgreSQL Down
+        # ---------------------------------------------------------------------
+        - alert: PostgreSQLDown
+          expr: |
+            up{job="postgresql", namespace="cognimend"} == 0
+            or absent(up{job="postgresql", namespace="cognimend"})
+          for: 1m
+          labels:
+            severity: critical
+            team: platform
+            service: postgresql
+          annotations:
+            summary: "PostgreSQL database is unreachable"
+            description: |
+              PostgreSQL database in namespace {{ $labels.namespace }} is down
+              or not responding to health checks.
+            impact: "All services dependent on PostgreSQL are affected"
+            runbook_url: "https://wiki.example.com/runbooks/postgresql-down"
+            resolution: |
+              1. Check PostgreSQL pod: kubectl get pods -n cognimend -l app.kubernetes.io/name=postgresql
+              2. Check PostgreSQL logs: kubectl logs -n cognimend postgresql-0
+              3. Check PVC status: kubectl get pvc -n cognimend postgres-pvc
+
+        # ---------------------------------------------------------------------
+        # Qdrant Vector Database Down
+        # ---------------------------------------------------------------------
+        - alert: QdrantDown
+          expr: |
+            up{job="qdrant", namespace="cognimend"} == 0
+            or absent(up{job="qdrant", namespace="cognimend"})
+          for: 1m
+          labels:
+            severity: critical
+            team: platform
+            service: qdrant
+          annotations:
+            summary: "Qdrant vector database is unreachable"
+            description: |
+              Qdrant database in namespace {{ $labels.namespace }} is down.
+              Vector search functionality is impacted.
+            impact: "RAG queries cannot retrieve relevant documents"
+            runbook_url: "https://wiki.example.com/runbooks/qdrant-down"
+
+        # ---------------------------------------------------------------------
+        # Redis Down
+        # ---------------------------------------------------------------------
+        - alert: RedisDown
+          expr: |
+            up{job="redis", namespace="cognimend"} == 0
+            or absent(up{job="redis", namespace="cognimend"})
+          for: 1m
+          labels:
+            severity: critical
+            team: platform
+            service: redis
+          annotations:
+            summary: "Redis cache is unreachable"
+            description: |
+              Redis cache in namespace {{ $labels.namespace }} is down.
+              Caching and rate limiting may be affected.
+            impact: "Increased latency, potential rate limiting issues"
+            runbook_url: "https://wiki.example.com/runbooks/redis-down"
+
+        # ---------------------------------------------------------------------
+        # Out of Memory
+        # ---------------------------------------------------------------------
+        - alert: OutOfMemory
+          expr: |
+            (
+              container_memory_working_set_bytes{namespace="cognimend", container!="", container!="POD"}
+              /
+              container_spec_memory_limit_bytes{namespace="cognimend", container!="", container!="POD"}
+            ) * 100 > 95
+          for: 5m
+          labels:
+            severity: critical
+            team: platform
+            service: "{{ $labels.container }}"
+          annotations:
+            summary: "Container {{ $labels.container }} is running out of memory"
+            description: |
+              Container {{ $labels.container }} in pod {{ $labels.pod }} is using
+              {{ $value | printf "%.1f" }}% of its memory limit.
+            impact: "Pod may be OOMKilled, causing service disruption"
+            runbook_url: "https://wiki.example.com/runbooks/rag-oom"
+            resolution: |
+              1. Check memory usage: kubectl top pod {{ $labels.pod }} -n cognimend
+              2. Consider increasing memory limits
+              3. Check for memory leaks in application logs
+
+    # =========================================================================
+    # Warning Alerts - Investigation Required
+    # =========================================================================
+    - name: cognimend.warning
+      interval: 60s
+      rules:
+        # ---------------------------------------------------------------------
+        # High Latency
+        # ---------------------------------------------------------------------
+        - alert: HighLatency
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(rag_query_duration_seconds_bucket{namespace="cognimend"}[5m])) by (le)
+            ) * 1000 > 3000
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+            service: rag
+          annotations:
+            summary: "High P95 latency detected in RAG queries"
+            description: |
+              P95 query latency is {{ $value | printf "%.0f" }}ms (threshold: 3000ms)
+              Users may experience slow response times.
+            impact: "Degraded user experience due to slow queries"
+            runbook_url: "https://wiki.example.com/runbooks/rag-high-latency"
+            possible_causes: |
+              1. High load on LLM API
+              2. Vector database performance issues
+              3. Network latency to external APIs
+              4. Resource constraints
+
+        # ---------------------------------------------------------------------
+        # Low Confidence Score
+        # ---------------------------------------------------------------------
+        - alert: LowConfidence
+          expr: |
+            avg(rag_confidence_score{namespace="cognimend"}) * 100 < 70
+          for: 10m
+          labels:
+            severity: warning
+            team: ml
+            service: rag
+          annotations:
+            summary: "Average RAG confidence score is below threshold"
+            description: |
+              Average confidence score is {{ $value | printf "%.1f" }}% (threshold: 70%)
+              This may indicate quality issues with responses.
+            impact: "Users may receive lower quality answers"
+            runbook_url: "https://wiki.example.com/runbooks/rag-low-confidence"
+            investigation: |
+              1. Check if new documents have been uploaded
+              2. Review embedding quality
+              3. Check chunk size configuration
+              4. Verify LLM model performance
+
+        # ---------------------------------------------------------------------
+        # High Cost Alert
+        # ---------------------------------------------------------------------
+        - alert: HighCost
+          expr: |
+            sum(increase(rag_llm_cost_dollars{namespace="cognimend"}[1h])) > 2
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+            service: rag
+          annotations:
+            summary: "Hourly LLM cost exceeds threshold"
+            description: |
+              Current hourly cost is ${{ $value | printf "%.2f" }} (threshold: $2.00)
+              This may indicate unusual usage patterns or cost efficiency issues.
+            impact: "Increased operational costs"
+            runbook_url: "https://wiki.example.com/runbooks/rag-high-cost"
+            actions: |
+              1. Check for unusual query patterns
+              2. Review caching effectiveness
+              3. Consider using smaller models for simple queries
+              4. Implement query batching if applicable
+
+        # ---------------------------------------------------------------------
+        # High Memory Usage
+        # ---------------------------------------------------------------------
+        - alert: HighMemoryUsage
+          expr: |
+            (
+              container_memory_working_set_bytes{namespace="cognimend", container!="", container!="POD"}
+              /
+              container_spec_memory_limit_bytes{namespace="cognimend", container!="", container!="POD"}
+            ) * 100 > 90
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+            service: "{{ $labels.container }}"
+          annotations:
+            summary: "Container {{ $labels.container }} memory usage is high"
+            description: |
+              Container {{ $labels.container }} is using {{ $value | printf "%.1f" }}%
+              of its memory limit. May lead to OOMKill if trend continues.
+            impact: "Risk of service disruption if memory is exhausted"
+            runbook_url: "https://wiki.example.com/runbooks/rag-high-memory"
+
+        # ---------------------------------------------------------------------
+        # Confidence Drift Detected
+        # ---------------------------------------------------------------------
+        - alert: ConfidenceDriftDetected
+          expr: |
+            increase(rag_drift_detected_total{namespace="cognimend", type="confidence"}[1h]) > 0
+          for: 1m
+          labels:
+            severity: warning
+            team: ml
+            service: drift-detector
+          annotations:
+            summary: "Confidence drift detected in RAG system"
+            description: |
+              Confidence drift has been detected {{ $value }} time(s) in the last hour.
+              Model output quality may be degrading.
+            impact: "Potential decrease in answer quality"
+            runbook_url: "https://wiki.example.com/runbooks/rag-confidence-drift"
+
+        # ---------------------------------------------------------------------
+        # Low Faithfulness Score (Phase 4)
+        # ---------------------------------------------------------------------
+        - alert: LowFaithfulnessScore
+          expr: |
+            avg(rag_faithfulness_score{namespace="cognimend"}) * 100 < 80
+          for: 15m
+          labels:
+            severity: critical
+            team: ml
+            service: evaluation
+          annotations:
+            summary: "Average Faithfulness Score is critically low"
+            description: |
+              Faithfulness score is {{ $value | printf "%.1f" }}% (threshold: 80%).
+              Model is hallucinating or generating ungrounded claims.
+            impact: "Users are receiving hallucinated or unsupported answers"
+            runbook_url: "https://wiki.example.com/runbooks/rag-low-faithfulness"
+
+        # ---------------------------------------------------------------------
+        # High Unsupported Claim Rate (Phase 4)
+        # ---------------------------------------------------------------------
+        - alert: HighUnsupportedClaimRate
+          expr: |
+            avg(rag_unsupported_claim_rate{namespace="cognimend"}) * 100 > 15
+          for: 15m
+          labels:
+            severity: warning
+            team: ml
+            service: evaluation
+          annotations:
+            summary: "High Unsupported Claim Rate Detected"
+            description: |
+              Unsupported claim rate has reached {{ $value | printf "%.1f" }}% (threshold: 15%).
+              The system is generating claims without sufficient document support.
+            impact: "Decreased trustworthiness of the RAG system"
+            runbook_url: "https://wiki.example.com/runbooks/rag-unsupported-claims"
+
+        # ---------------------------------------------------------------------
+        # Low Citation Accuracy (Phase 4)
+        # ---------------------------------------------------------------------
+        - alert: LowCitationAccuracy
+          expr: |
+            avg(rag_citation_accuracy{namespace="cognimend"}) * 100 < 85
+          for: 15m
+          labels:
+            severity: warning
+            team: ml
+            service: evaluation
+          annotations:
+            summary: "Citation Accuracy is below threshold"
+            description: |
+              Citation accuracy is {{ $value | printf "%.1f" }}% (threshold: 85%).
+              The generated citations are pointing to incorrect source chunks.
+            impact: "Users cannot verify answers effectively"
+            runbook_url: "https://wiki.example.com/runbooks/rag-low-citation-accuracy"
+
+        # ---------------------------------------------------------------------
+        # Latency Drift Detected
+        # ---------------------------------------------------------------------
+        - alert: LatencyDriftDetected
+          expr: |
+            increase(rag_drift_detected_total{namespace="cognimend", type="latency"}[1h]) > 0
+          for: 1m
+          labels:
+            severity: warning
+            team: platform
+            service: drift-detector
+          annotations:
+            summary: "Latency drift detected in RAG system"
+            description: |
+              Latency drift has been detected {{ $value }} time(s) in the last hour.
+              Query response times may be increasing.
+            impact: "User experience may be degrading"
+            runbook_url: "https://wiki.example.com/runbooks/rag-latency-drift"
+
+        # ---------------------------------------------------------------------
+        # Data Drift Detected
+        # ---------------------------------------------------------------------
+        - alert: DataDriftDetected
+          expr: |
+            increase(rag_drift_detected_total{namespace="cognimend", type="data"}[1h]) > 0
+          for: 1m
+          labels:
+            severity: warning
+            team: ml
+            service: drift-detector
+          annotations:
+            summary: "Data drift detected in RAG system"
+            description: |
+              Data drift has been detected {{ $value }} time(s) in the last hour.
+              Input data distribution may have changed significantly.
+            impact: "Model performance may be affected by changed data patterns"
+            runbook_url: "https://wiki.example.com/runbooks/rag-data-drift"
+
+        # ---------------------------------------------------------------------
+        # Low Cache Hit Rate
+        # ---------------------------------------------------------------------
+        - alert: CacheHitRateLow
+          expr: |
+            (
+              sum(rate(rag_cache_hits_total{namespace="cognimend"}[10m]))
+              /
+              (
+                sum(rate(rag_cache_hits_total{namespace="cognimend"}[10m]))
+                +
+                sum(rate(rag_cache_misses_total{namespace="cognimend"}[10m]))
+              )
+            ) * 100 < 30
+          for: 10m
+          labels:
+            severity: warning
+            team: platform
+            service: redis
+          annotations:
+            summary: "Cache hit rate is below threshold"
+            description: |
+              Cache hit rate is {{ $value | printf "%.1f" }}% (threshold: 30%)
+              This may indicate caching inefficiency or changed query patterns.
+            impact: "Increased latency and LLM API costs due to cache misses"
+            runbook_url: "https://wiki.example.com/runbooks/rag-low-cache-hit"
+            investigation: |
+              1. Check Redis memory usage
+              2. Review cache TTL settings
+              3. Analyze query patterns for cacheability
+              4. Consider cache warming strategies
+
+        # ---------------------------------------------------------------------
+        # HPA at Maximum
+        # ---------------------------------------------------------------------
+        - alert: HPAAtMaximum
+          expr: |
+            kube_horizontalpodautoscaler_status_current_replicas{namespace="cognimend"}
+            ==
+            kube_horizontalpodautoscaler_spec_max_replicas{namespace="cognimend"}
+          for: 15m
+          labels:
+            severity: warning
+            team: platform
+            service: "{{ $labels.horizontalpodautoscaler }}"
+          annotations:
+            summary: "HPA {{ $labels.horizontalpodautoscaler }} at maximum replicas"
+            description: |
+              HPA {{ $labels.horizontalpodautoscaler }} has been at maximum replicas
+              ({{ $value }}) for 15+ minutes. May need to increase max replicas.
+            impact: "Service cannot scale further to handle load"
+            runbook_url: "https://wiki.example.com/runbooks/rag-hpa-max"
+
+        # ---------------------------------------------------------------------
+        # Pod Restarts
+        # ---------------------------------------------------------------------
+        - alert: PodRestarts
+          expr: |
+            increase(kube_pod_container_status_restarts_total{namespace="cognimend"}[1h]) > 3
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+            service: "{{ $labels.container }}"
+          annotations:
+            summary: "Pod {{ $labels.pod }} has restarted multiple times"
+            description: |
+              Container {{ $labels.container }} in pod {{ $labels.pod }} has restarted
+              {{ $value | printf "%.0f" }} times in the last hour.
+            impact: "Service instability"
+            runbook_url: "https://wiki.example.com/runbooks/rag-pod-restarts"
+
+    # =========================================================================
+    # Info Alerts - Informational Only
+    # =========================================================================
+    - name: cognimend.info
+      interval: 60s
+      rules:
+        # ---------------------------------------------------------------------
+        # New Document Uploaded
+        # ---------------------------------------------------------------------
+        - alert: NewDocumentUploaded
+          expr: |
+            increase(rag_documents_uploaded_total{namespace="cognimend"}[5m]) > 0
+          for: 0m
+          labels:
+            severity: info
+            team: content
+            service: upload
+          annotations:
+            summary: "New document uploaded to RAG system"
+            description: |
+              {{ $value | printf "%.0f" }} new document(s) have been uploaded
+              in the last 5 minutes.
+            impact: "None - informational"
+
+        # ---------------------------------------------------------------------
+        # High Traffic
+        # ---------------------------------------------------------------------
+        - alert: HighTraffic
+          expr: |
+            sum(rate(rag_queries_total{namespace="cognimend"}[5m])) > 200
+          for: 5m
+          labels:
+            severity: info
+            team: platform
+            service: rag
+          annotations:
+            summary: "High traffic detected on RAG system"
+            description: |
+              Current request rate is {{ $value | printf "%.0f" }} req/s (threshold: 200)
+              Traffic is unusually high.
+            impact: "Monitor for resource constraints and latency increases"
+            actions: |
+              1. Monitor HPA scaling behavior
+              2. Check latency metrics
+              3. Verify cache effectiveness
+              4. Be prepared to scale manually if needed
+
+        # ---------------------------------------------------------------------
+        # Deployment Rollout Complete
+        # ---------------------------------------------------------------------
+        - alert: DeploymentRolloutComplete
+          expr: |
+            changes(kube_deployment_status_observed_generation{namespace="cognimend"}[5m]) > 0
+            and
+            kube_deployment_status_replicas{namespace="cognimend"}
+            ==
+            kube_deployment_status_replicas_available{namespace="cognimend"}
+          for: 0m
+          labels:
+            severity: info
+            team: platform
+            service: "{{ $labels.deployment }}"
+          annotations:
+            summary: "Deployment {{ $labels.deployment }} rollout complete"
+            description: |
+              Deployment {{ $labels.deployment }} has completed a rollout.
+              All {{ $value }} replicas are available.
+            impact: "None - informational"
+
+        # ---------------------------------------------------------------------
+        # Low Query Volume
+        # ---------------------------------------------------------------------
+        - alert: LowQueryVolume
+          expr: |
+            sum(rate(rag_queries_total{namespace="cognimend"}[1h])) < 1
+          for: 30m
+          labels:
+            severity: info
+            team: platform
+            service: rag
+          annotations:
+            summary: "Unusually low query volume"
+            description: |
+              Query rate is below 1 req/s for the last 30 minutes.
+              This may indicate a usage issue or expected low-traffic period.
+            impact: "May indicate potential issue if unexpected"

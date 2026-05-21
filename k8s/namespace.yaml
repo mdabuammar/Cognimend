@@ -1,0 +1,15 @@
+# =============================================================================
+# Namespace for RAG System
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cognimend
+  labels:
+    app.kubernetes.io/name: cognimend
+    app.kubernetes.io/component: namespace
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: "RAG System with 6 microservices"
+    owner: "platform-team"
+    prometheus.io/scrape: "true"

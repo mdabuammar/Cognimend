@@ -1,0 +1,43 @@
+# Dockerfile.test
+# Docker image for running tests
+#
+# Build:
+#   docker build -f Dockerfile.test -t cognimend-test .
+#
+# Run:
+#   docker run --rm cognimend-test pytest tests/
+
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements
+COPY requirements.txt .
+COPY tests/requirements-test.txt ./tests/
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir -r tests/requirements-test.txt
+
+# Copy application code
+COPY services/ ./services/
+COPY core/ ./core/
+COPY config/ ./config/
+COPY tests/ ./tests/
+
+# Create directories for test output
+RUN mkdir -p /app/test-results /app/coverage
+
+# Set Python path
+ENV PYTHONPATH=/app
+
+# Default command
+CMD ["pytest", "-v", "--cov=services", "tests/"]

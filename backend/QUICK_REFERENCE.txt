@@ -1,0 +1,152 @@
+# ⚡ QUICK START CARD (Print This!)
+
+## The One Command You Need
+
+```powershell
+cd D:\Project\backend
+.\test-docker-setup.ps1
+```
+
+## What It Does (30 minutes)
+
+✅ Validates environment  
+✅ Builds Docker images (5-10 min)  
+✅ Starts all 9 services  
+✅ Tests all 6 services  
+✅ Uploads document  
+✅ Queries answer  
+✅ Checks dashboard  
+✅ Detects drift  
+✅ Tests auto-healing  
+✅ Measures improvement  
+
+## What You'll See
+
+| Phase | Status | Time |
+|-------|--------|------|
+| Pre-flight | ✅ All systems go | 30 sec |
+| Build | ✅ Images created | 5-10 min |
+| Start | ✅ Services running | 2 min |
+| Health | ✅ All healthy | 2 min |
+| Tests | ✅ All passing | 5-10 min |
+| Drift | ✅ Detected & fixed | 5 min |
+| **Complete** | **✅ Perfect!** | **~30 min** |
+
+## Expected Output (Good ✅)
+
+```
+✅ Docker version 24.x.x
+✅ Docker Compose version v2.x.x
+✅ All 6 Dockerfiles exist
+[Building...]
+✅ Docker build completed
+✅ All 9 containers running
+✅ Upload (8001): HEALTHY
+✅ Query (8002): HEALTHY
+✅ Telemetry (8003): HEALTHY
+✅ Drift Detector (8004): HEALTHY
+✅ Controller (8005): HEALTHY
+✅ Evaluation (8006): HEALTHY
+✅ Upload successful
+✅ Query successful
+✅ Dashboard stats retrieved
+✅ Drift status retrieved
+✅ Evaluation completed
+✅ All basic tests passed!
+```
+
+## If Something Goes Wrong (❌)
+
+```powershell
+# View detailed logs
+docker-compose logs
+
+# Check specific service
+docker-compose logs upload
+
+# Restart everything
+docker-compose down -v
+docker-compose up -d
+.\test-docker-setup.ps1
+```
+
+## Advanced Options
+
+```powershell
+# With drift test
+.\test-docker-setup.ps1 -AdvancedDrift
+
+# Skip build if already done
+.\test-docker-setup.ps1 -SkipBuild
+
+# Skip starting services
+.\test-docker-setup.ps1 -SkipStart
+
+# Combine options
+.\test-docker-setup.ps1 -SkipBuild -AdvancedDrift
+```
+
+## Essential Commands
+
+```powershell
+# Check status anytime
+docker ps
+
+# View logs
+docker-compose logs -f
+
+# Test specific service
+curl http://localhost:8003/dashboard/stats
+
+# Stop system
+docker-compose down
+
+# Reset completely
+docker-compose down -v
+```
+
+## Success Criteria
+
+- ✅ All 9 containers running
+- ✅ All 6 services "healthy"
+- ✅ Upload works
+- ✅ Query works
+- ✅ Dashboard works
+- ✅ Drift detected
+- ✅ Controller responded
+- ✅ No ❌ errors
+
+**If you see all ✅ → YOU'RE DONE! 🎉**
+
+## What This Proves
+
+Your system can:
+- ✅ Process documents
+- ✅ Answer questions
+- ✅ Monitor metrics
+- ✅ Detect problems
+- ✅ Fix itself automatically
+- ✅ Scale to production
+
+## Next Steps
+
+1. **Tests pass?** → Ready for production!
+2. **Need logs?** → `docker-compose logs -f`
+3. **Want to stop?** → `docker-compose down`
+4. **Deploy?** → Copy to server, run same command
+5. **Scale?** → Week 6: Kubernetes
+
+---
+
+**Print this page or bookmark it!**
+
+It's your reference for running the complete test suite.
+
+## Still Here? Run It! 👇
+
+```powershell
+cd D:\Project\backend
+.\test-docker-setup.ps1
+```
+
+**That's all you need.** The rest happens automatically. ⚡

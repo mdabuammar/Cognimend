@@ -1,0 +1,196 @@
+# =============================================================================
+# Ingress Resource for External Access
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cognimend-ingress
+  namespace: cognimend
+  labels:
+    app.kubernetes.io/name: cognimend
+    app.kubernetes.io/component: ingress
+  annotations:
+    # Ingress class
+    kubernetes.io/ingress.class: nginx
+    
+    # SSL/TLS
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    
+    # Rate limiting
+    nginx.ingress.kubernetes.io/limit-connections: "50"
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/limit-rpm: "1000"
+    
+    # Timeouts
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    
+    # Body size (for file uploads)
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    
+    # CORS headers
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://cognimend.example.com"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization,X-API-Key"
+    
+    # Security headers
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      add_header X-Content-Type-Options nosniff always;
+      add_header X-Frame-Options DENY always;
+      add_header X-XSS-Protection "1; mode=block" always;
+      add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+      add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';" always;
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - api.cognimend.example.com
+      secretName: cognimend-tls
+  rules:
+    # API Gateway routing
+    - host: api.cognimend.example.com
+      http:
+        paths:
+          # Upload Service
+          - path: /upload
+            pathType: Prefix
+            backend:
+              service:
+                name: upload
+                port:
+                  number: 8001
+          
+          - path: /documents
+            pathType: Prefix
+            backend:
+              service:
+                name: upload
+                port:
+                  number: 8001
+          
+          # Query Service
+          - path: /query
+            pathType: Prefix
+            backend:
+              service:
+                name: query
+                port:
+                  number: 8002
+          
+          # Telemetry Service
+          - path: /telemetry
+            pathType: Prefix
+            backend:
+              service:
+                name: telemetry
+                port:
+                  number: 8003
+          
+          - path: /dashboard
+            pathType: Prefix
+            backend:
+              service:
+                name: telemetry
+                port:
+                  number: 8003
+          
+          # Drift Detector Service
+          - path: /drift
+            pathType: Prefix
+            backend:
+              service:
+                name: drift-detector
+                port:
+                  number: 8004
+          
+          # Controller Service (admin endpoints)
+          - path: /config
+            pathType: Prefix
+            backend:
+              service:
+                name: controller
+                port:
+                  number: 8005
+          
+          - path: /trigger-action
+            pathType: Prefix
+            backend:
+              service:
+                name: controller
+                port:
+                  number: 8005
+          
+          # Evaluation Service
+          - path: /evaluate
+            pathType: Prefix
+            backend:
+              service:
+                name: evaluation
+                port:
+                  number: 8006
+          
+          # Health checks (unified)
+          - path: /health
+            pathType: Exact
+            backend:
+              service:
+                name: query
+                port:
+                  number: 8002
+
+---
+# =============================================================================
+# Service Account for Application Pods
+# =============================================================================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cognimend-service
+  namespace: cognimend
+  labels:
+    app.kubernetes.io/name: cognimend
+    app.kubernetes.io/component: rbac
+
+---
+# =============================================================================
+# Role for Service Account
+# =============================================================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cognimend-role
+  namespace: cognimend
+  labels:
+    app.kubernetes.io/name: cognimend
+    app.kubernetes.io/component: rbac
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+
+---
+# =============================================================================
+# RoleBinding
+# =============================================================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cognimend-rolebinding
+  namespace: cognimend
+  labels:
+    app.kubernetes.io/name: cognimend
+    app.kubernetes.io/component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cognimend-role
+subjects:
+  - kind: ServiceAccount
+    name: cognimend-service
+    namespace: cognimend

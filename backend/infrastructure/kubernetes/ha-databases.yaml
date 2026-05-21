@@ -1,0 +1,330 @@
+# PostgreSQL High Availability with Patroni/Zalando Operator
+---
+apiVersion: "acid.zalan.do/v1"
+kind: postgresql
+metadata:
+  name: driftguard-postgres
+  namespace: driftguard
+spec:
+  teamId: "driftguard"
+  
+  # Cluster size - 3 nodes for HA
+  numberOfInstances: 3
+  
+  # Users
+  users:
+    driftguard:
+    - superuser
+    - createdb
+    replicator:
+    - replication
+  
+  # Databases
+  databases:
+    cognimend: driftguard
+  
+  # PostgreSQL settings
+  postgresql:
+    version: "15"
+    parameters:
+      # Connection settings
+      max_connections: "200"
+      
+      # Memory settings
+      shared_buffers: "256MB"
+      effective_cache_size: "768MB"
+      work_mem: "4MB"
+      maintenance_work_mem: "64MB"
+      
+      # WAL settings
+      wal_buffers: "8MB"
+      min_wal_size: "1GB"
+      max_wal_size: "4GB"
+      
+      # Replication settings
+      synchronous_commit: "on"
+      hot_standby: "on"
+      wal_level: "replica"
+      max_wal_senders: "10"
+      max_replication_slots: "10"
+      
+      # Logging
+      log_statement: "mod"
+      log_min_duration_statement: "1000"
+  
+  # Storage
+  volume:
+    size: 50Gi
+    storageClass: fast-ssd
+  
+  # Resources
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2
+      memory: 4Gi
+  
+  # Enable connection pooler (PgBouncer)
+  enableConnectionPooler: true
+  connectionPooler:
+    numberOfInstances: 2
+    mode: "transaction"
+    resources:
+      requests:
+        cpu: 100m
+        memory: 100Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+  
+  # Load balancer services
+  enableMasterLoadBalancer: true
+  enableReplicaLoadBalancer: true
+  
+  # Patroni settings
+  patroni:
+    initdb:
+      encoding: "UTF8"
+      data-checksums: "true"
+    pg_hba:
+      - host all all 0.0.0.0/0 md5
+      - host replication replicator 0.0.0.0/0 md5
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 33554432
+---
+# Redis Cluster with Sentinel for HA
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: driftguard
+spec:
+  serviceName: redis
+  replicas: 3
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: redis
+            topologyKey: kubernetes.io/hostname
+      
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+          name: redis
+        - containerPort: 26379
+          name: sentinel
+        
+        command: ["redis-server"]
+        args:
+          - "--appendonly"
+          - "yes"
+          - "--appendfsync"
+          - "everysec"
+          - "--maxmemory"
+          - "512mb"
+          - "--maxmemory-policy"
+          - "allkeys-lru"
+        
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 3
+        
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+  
+  volumeClaimTemplates:
+  - metadata:
+      name: redis-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: fast-ssd
+      resources:
+        requests:
+          storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: driftguard
+spec:
+  type: ClusterIP
+  ports:
+  - port: 6379
+    targetPort: 6379
+    name: redis
+  selector:
+    app: redis
+---
+# Qdrant Cluster for Vector Database HA
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: qdrant
+  namespace: driftguard
+spec:
+  serviceName: qdrant-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: qdrant
+  template:
+    metadata:
+      labels:
+        app: qdrant
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: qdrant
+            topologyKey: kubernetes.io/hostname
+      
+      containers:
+      - name: qdrant
+        image: qdrant/qdrant:v1.7.4
+        ports:
+        - containerPort: 6333
+          name: http
+        - containerPort: 6334
+          name: grpc
+        - containerPort: 6335
+          name: p2p
+        
+        env:
+        - name: QDRANT__CLUSTER__ENABLED
+          value: "true"
+        - name: QDRANT__CLUSTER__P2P__PORT
+          value: "6335"
+        - name: QDRANT__STORAGE__STORAGE_PATH
+          value: "/qdrant/storage"
+        - name: QDRANT__SERVICE__HTTP_PORT
+          value: "6333"
+        - name: QDRANT__SERVICE__GRPC_PORT
+          value: "6334"
+        
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 6333
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 6333
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        
+        volumeMounts:
+        - name: qdrant-storage
+          mountPath: /qdrant/storage
+  
+  volumeClaimTemplates:
+  - metadata:
+      name: qdrant-storage
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: fast-ssd
+      resources:
+        requests:
+          storage: 50Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant-headless
+  namespace: driftguard
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - port: 6333
+    targetPort: 6333
+    name: http
+  - port: 6334
+    targetPort: 6334
+    name: grpc
+  - port: 6335
+    targetPort: 6335
+    name: p2p
+  selector:
+    app: qdrant
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant
+  namespace: driftguard
+spec:
+  type: ClusterIP
+  ports:
+  - port: 6333
+    targetPort: 6333
+    name: http
+  - port: 6334
+    targetPort: 6334
+    name: grpc
+  selector:
+    app: qdrant
+---
+# Persistent Volume Claim for uploads
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: upload-storage-pvc
+  namespace: driftguard
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: nfs-storage
+  resources:
+    requests:
+      storage: 100Gi

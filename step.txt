@@ -1,0 +1,13 @@
+Week 1 Use Lovable prompts → Download UI → Deploy to Vercel
+
+Week 2 Build RAG API + Indexer (Docker local)
+
+Week 3 Add Telemetry + Drift Detection
+
+Week 4 Add Controller (auto-fix)
+
+Week 5 Containerize everything (Docker Compose)
+
+Week 6 Deploy to Kubernetes + Cloud
+
+Week 7 Demo video + Documentation

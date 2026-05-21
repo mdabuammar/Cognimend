@@ -1,0 +1,431 @@
+name: Rollback Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      service:
+        description: 'Service to rollback (or "all" for all services)'
+        required: true
+        type: choice
+        options:
+          - all
+          - upload
+          - query
+          - telemetry
+          - drift-detector
+          - controller
+          - evaluation
+      revision:
+        description: 'Revision to rollback to (leave empty for previous)'
+        required: false
+        type: string
+      reason:
+        description: 'Reason for rollback'
+        required: true
+        type: string
+
+env:
+  CLUSTER_NAME: cognimend-cluster
+  NAMESPACE: cognimend
+
+jobs:
+  validate:
+    name: Validate Rollback Request
+    runs-on: ubuntu-latest
+    outputs:
+      approved: ${{ steps.approval.outputs.approved }}
+    steps:
+      - name: Check deployment history
+        id: history
+        run: |
+          echo "🔍 Validating rollback request..."
+          echo "Environment: ${{ github.event.inputs.environment }}"
+          echo "Service: ${{ github.event.inputs.service }}"
+          echo "Revision: ${{ github.event.inputs.revision || 'previous' }}"
+          echo "Reason: ${{ github.event.inputs.reason }}"
+          echo ""
+          echo "Requested by: ${{ github.actor }}"
+          echo "Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+
+      - name: Require approval for production
+        id: approval
+        if: github.event.inputs.environment == 'production'
+        uses: trstringer/manual-approval@v1
+        with:
+          secret: ${{ github.token }}
+          approvers: sre-team,platform-team
+          minimum-approvals: 2
+          issue-title: "🚨 Production Rollback Request: ${{ github.event.inputs.service }}"
+          issue-body: |
+            ## Rollback Request Details
+            
+            **Environment:** ${{ github.event.inputs.environment }}
+            **Service:** ${{ github.event.inputs.service }}
+            **Target Revision:** ${{ github.event.inputs.revision || 'previous' }}
+            **Reason:** ${{ github.event.inputs.reason }}
+            **Requested By:** ${{ github.actor }}
+            
+            ---
+            
+            ⚠️ **This is a production rollback request that requires approval from 2 team members.**
+            
+            Please review and approve if appropriate.
+
+  notify-start:
+    name: Notify Rollback Start
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - name: Send Slack notification
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "🔄 Rollback Started",
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "🔄 Rollback Initiated"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Environment:*\n${{ github.event.inputs.environment }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Service:*\n${{ github.event.inputs.service }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Revision:*\n${{ github.event.inputs.revision || 'previous' }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Initiated By:*\n${{ github.actor }}"
+                    }
+                  ]
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Reason:*\n${{ github.event.inputs.reason }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+        continue-on-error: true
+
+  rollback:
+    name: Execute Rollback
+    runs-on: ubuntu-latest
+    needs: [validate, notify-start]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ secrets.AWS_REGION }}
+
+      - name: Get current deployment state
+        id: current-state
+        run: |
+          echo "📸 Capturing current deployment state..."
+          
+          SERVICES="${{ github.event.inputs.service }}"
+          
+          if [ "$SERVICES" = "all" ]; then
+            SERVICES="upload query telemetry drift-detector controller evaluation"
+          fi
+          
+          for service in $SERVICES; do
+            echo "Service: $service"
+            kubectl get deployment ${service}-deployment -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.template.spec.containers[0].image}' || echo "Not found"
+            echo ""
+          done
+
+      - name: Rollback single service
+        if: github.event.inputs.service != 'all'
+        run: |
+          SERVICE="${{ github.event.inputs.service }}"
+          REVISION="${{ github.event.inputs.revision }}"
+          
+          echo "🔄 Rolling back $SERVICE..."
+          
+          if [ -z "$REVISION" ]; then
+            # Rollback to previous revision
+            kubectl rollout undo deployment/${SERVICE}-deployment -n ${{ env.NAMESPACE }}
+          else
+            # Rollback to specific revision
+            kubectl rollout undo deployment/${SERVICE}-deployment -n ${{ env.NAMESPACE }} --to-revision=$REVISION
+          fi
+          
+          echo "⏳ Waiting for rollout to complete..."
+          kubectl rollout status deployment/${SERVICE}-deployment -n ${{ env.NAMESPACE }} --timeout=300s
+
+      - name: Rollback all services
+        if: github.event.inputs.service == 'all'
+        run: |
+          REVISION="${{ github.event.inputs.revision }}"
+          SERVICES="upload query telemetry drift-detector controller evaluation"
+          
+          for service in $SERVICES; do
+            echo "🔄 Rolling back $service..."
+            
+            if [ -z "$REVISION" ]; then
+              kubectl rollout undo deployment/${service}-deployment -n ${{ env.NAMESPACE }} || true
+            else
+              kubectl rollout undo deployment/${service}-deployment -n ${{ env.NAMESPACE }} --to-revision=$REVISION || true
+            fi
+          done
+          
+          echo "⏳ Waiting for all rollouts to complete..."
+          for service in $SERVICES; do
+            kubectl rollout status deployment/${service}-deployment -n ${{ env.NAMESPACE }} --timeout=300s || true
+          done
+
+  verify:
+    name: Verify Rollback
+    runs-on: ubuntu-latest
+    needs: rollback
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ secrets.AWS_REGION }}
+
+      - name: Verify deployment health
+        id: verify
+        run: |
+          echo "🔍 Verifying rollback..."
+          
+          SERVICES="${{ github.event.inputs.service }}"
+          
+          if [ "$SERVICES" = "all" ]; then
+            SERVICES="upload query telemetry drift-detector controller evaluation"
+          fi
+          
+          FAILED=false
+          
+          for service in $SERVICES; do
+            echo "Checking $service..."
+            
+            # Check if pods are ready
+            READY=$(kubectl get deployment ${service}-deployment -n ${{ env.NAMESPACE }} -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+            DESIRED=$(kubectl get deployment ${service}-deployment -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "1")
+            
+            if [ "$READY" = "$DESIRED" ]; then
+              echo "✅ $service: $READY/$DESIRED pods ready"
+            else
+              echo "❌ $service: $READY/$DESIRED pods ready"
+              FAILED=true
+            fi
+            
+            # Get current image
+            IMAGE=$(kubectl get deployment ${service}-deployment -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "unknown")
+            echo "   Image: $IMAGE"
+            echo ""
+          done
+          
+          if [ "$FAILED" = "true" ]; then
+            echo "::error::Some services failed to rollback properly"
+            exit 1
+          fi
+          
+          echo "✅ All services rolled back successfully"
+
+      - name: Run smoke tests
+        run: |
+          echo "🧪 Running smoke tests..."
+          
+          # Get service endpoints
+          UPLOAD_URL=$(kubectl get ingress -n ${{ env.NAMESPACE }} -o jsonpath='{.items[0].spec.rules[0].host}' 2>/dev/null || echo "localhost")
+          
+          # Health check for each service
+          SERVICES="${{ github.event.inputs.service }}"
+          
+          if [ "$SERVICES" = "all" ]; then
+            SERVICES="upload query telemetry drift-detector controller evaluation"
+          fi
+          
+          for service in $SERVICES; do
+            echo "Testing $service health endpoint..."
+            
+            # Port-forward and test health
+            kubectl port-forward svc/${service}-service 8080:8000 -n ${{ env.NAMESPACE }} &
+            PF_PID=$!
+            sleep 3
+            
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/health || echo "000")
+            
+            kill $PF_PID 2>/dev/null || true
+            
+            if [ "$HTTP_STATUS" = "200" ]; then
+              echo "✅ $service health check passed"
+            else
+              echo "⚠️ $service health check returned $HTTP_STATUS"
+            fi
+          done
+
+  notify-complete:
+    name: Notify Rollback Complete
+    runs-on: ubuntu-latest
+    needs: [rollback, verify]
+    if: always()
+    steps:
+      - name: Determine status
+        id: status
+        run: |
+          if [ "${{ needs.verify.result }}" = "success" ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "emoji=✅" >> $GITHUB_OUTPUT
+            echo "message=Rollback completed successfully" >> $GITHUB_OUTPUT
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "emoji=❌" >> $GITHUB_OUTPUT
+            echo "message=Rollback failed - manual intervention required" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send Slack notification
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "${{ steps.status.outputs.emoji }} Rollback ${{ steps.status.outputs.status }}",
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "${{ steps.status.outputs.emoji }} Rollback ${{ steps.status.outputs.status }}"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Environment:*\n${{ github.event.inputs.environment }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Service:*\n${{ github.event.inputs.service }}"
+                    }
+                  ]
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "${{ steps.status.outputs.message }}"
+                  }
+                },
+                {
+                  "type": "context",
+                  "elements": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "Triggered by ${{ github.actor }} | <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Run>"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+        continue-on-error: true
+
+      - name: Create incident ticket on failure
+        if: needs.verify.result != 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🚨 Rollback Failed: ${{ github.event.inputs.service }} in ${{ github.event.inputs.environment }}`,
+              body: `## Rollback Failure Report
+              
+              **Environment:** ${{ github.event.inputs.environment }}
+              **Service:** ${{ github.event.inputs.service }}
+              **Revision:** ${{ github.event.inputs.revision || 'previous' }}
+              **Reason:** ${{ github.event.inputs.reason }}
+              **Triggered By:** ${{ github.actor }}
+              
+              ---
+              
+              ### Action Required
+              
+              The automated rollback has failed and requires manual intervention.
+              
+              **Workflow Run:** [View Details](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+              
+              ### Next Steps
+              
+              1. Review the workflow logs for error details
+              2. Check cluster status: \`kubectl get pods -n cognimend\`
+              3. Review deployment events: \`kubectl describe deployment -n cognimend\`
+              4. Consider manual rollback if needed
+              
+              /cc @sre-team @platform-team
+              `,
+              labels: ['incident', 'rollback-failure', 'priority:high']
+            });
+
+  record-event:
+    name: Record Rollback Event
+    runs-on: ubuntu-latest
+    needs: [rollback, verify]
+    if: always()
+    steps:
+      - name: Record to audit log
+        run: |
+          echo "📝 Recording rollback event to audit log..."
+          
+          TIMESTAMP=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          STATUS="${{ needs.verify.result }}"
+          
+          cat << EOF
+          {
+            "event_type": "rollback",
+            "timestamp": "$TIMESTAMP",
+            "environment": "${{ github.event.inputs.environment }}",
+            "service": "${{ github.event.inputs.service }}",
+            "revision": "${{ github.event.inputs.revision || 'previous' }}",
+            "reason": "${{ github.event.inputs.reason }}",
+            "initiated_by": "${{ github.actor }}",
+            "workflow_run_id": "${{ github.run_id }}",
+            "status": "$STATUS"
+          }
+          EOF

@@ -1,0 +1,34 @@
+# =============================================================================
+# Production Environment Overlay
+# =============================================================================
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: driftguard-prod
+
+resources:
+  - ../../
+  - ../../blue-green-deployment.yaml
+  - ../../prometheus-rules.yaml
+
+commonLabels:
+  environment: production
+
+patches:
+  - path: replica-patch.yaml
+  - path: resources-patch.yaml
+  - path: hpa-patch.yaml
+
+configMapGenerator:
+  - name: driftguard-config
+    behavior: merge
+    literals:
+      - ENVIRONMENT=production
+      - LOG_LEVEL=INFO
+      - ENABLE_DEBUG=false
+      - ENABLE_METRICS=true
+      - ENABLE_TRACING=true
+
+# Production images are pinned to specific versions
+# Updated by CI/CD pipeline

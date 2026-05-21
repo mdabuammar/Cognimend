@@ -1,0 +1,289 @@
+# =============================================================================
+# DriftGuard RBAC Configuration
+# =============================================================================
+# Implements least-privilege access for all services
+# =============================================================================
+
+# Namespace-level service accounts
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: driftguard-controller
+  namespace: driftguard-prod
+  labels:
+    app: driftguard
+    component: controller
+automountServiceAccountToken: false
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: driftguard-query
+  namespace: driftguard-prod
+  labels:
+    app: driftguard
+    component: query
+automountServiceAccountToken: false
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: driftguard-upload
+  namespace: driftguard-prod
+  labels:
+    app: driftguard
+    component: upload
+automountServiceAccountToken: false
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: driftguard-evaluation
+  namespace: driftguard-prod
+  labels:
+    app: driftguard
+    component: evaluation
+automountServiceAccountToken: false
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: driftguard-drift
+  namespace: driftguard-prod
+  labels:
+    app: driftguard
+    component: drift-detector
+automountServiceAccountToken: false
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: driftguard-telemetry
+  namespace: driftguard-prod
+  labels:
+    app: driftguard
+    component: telemetry
+automountServiceAccountToken: false
+
+---
+# Vault authentication service account
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vault-auth
+  namespace: driftguard-prod
+  labels:
+    app: driftguard
+    component: vault-auth
+
+---
+# Role for reading secrets
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: driftguard-secrets-reader
+  namespace: driftguard-prod
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["driftguard-secrets", "driftguard-tls"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["driftguard-config"]
+    verbs: ["get", "watch"]
+
+---
+# Role for reading pod information (for health checks)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: driftguard-pod-reader
+  namespace: driftguard-prod
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+
+---
+# Role for telemetry service (needs more permissions for metrics)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: driftguard-telemetry-role
+  namespace: driftguard-prod
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list"]
+
+---
+# RoleBindings for each service
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: driftguard-controller-secrets
+  namespace: driftguard-prod
+subjects:
+  - kind: ServiceAccount
+    name: driftguard-controller
+    namespace: driftguard-prod
+roleRef:
+  kind: Role
+  name: driftguard-secrets-reader
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: driftguard-query-secrets
+  namespace: driftguard-prod
+subjects:
+  - kind: ServiceAccount
+    name: driftguard-query
+    namespace: driftguard-prod
+roleRef:
+  kind: Role
+  name: driftguard-secrets-reader
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: driftguard-upload-secrets
+  namespace: driftguard-prod
+subjects:
+  - kind: ServiceAccount
+    name: driftguard-upload
+    namespace: driftguard-prod
+roleRef:
+  kind: Role
+  name: driftguard-secrets-reader
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: driftguard-evaluation-secrets
+  namespace: driftguard-prod
+subjects:
+  - kind: ServiceAccount
+    name: driftguard-evaluation
+    namespace: driftguard-prod
+roleRef:
+  kind: Role
+  name: driftguard-secrets-reader
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: driftguard-drift-secrets
+  namespace: driftguard-prod
+subjects:
+  - kind: ServiceAccount
+    name: driftguard-drift
+    namespace: driftguard-prod
+roleRef:
+  kind: Role
+  name: driftguard-secrets-reader
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: driftguard-telemetry-binding
+  namespace: driftguard-prod
+subjects:
+  - kind: ServiceAccount
+    name: driftguard-telemetry
+    namespace: driftguard-prod
+roleRef:
+  kind: Role
+  name: driftguard-telemetry-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# ClusterRole for external-secrets operator
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: external-secrets-reader
+  labels:
+    app: driftguard
+rules:
+  - apiGroups: ["external-secrets.io"]
+    resources: ["externalsecrets", "clustersecretstores", "secretstores"]
+    verbs: ["get", "list", "watch"]
+
+---
+# PodSecurityPolicy (deprecated in 1.25+, use Pod Security Standards)
+# Keeping for backwards compatibility
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: driftguard-restricted
+  annotations:
+    seccomp.security.alpha.kubernetes.io/allowedProfiles: 'runtime/default'
+    apparmor.security.beta.kubernetes.io/allowedProfiles: 'runtime/default'
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+    - ALL
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'persistentVolumeClaim'
+  hostNetwork: false
+  hostIPC: false
+  hostPID: false
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  seLinux:
+    rule: 'RunAsAny'
+  supplementalGroups:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1
+        max: 65535
+  fsGroup:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1
+        max: 65535
+  readOnlyRootFilesystem: true
+
+---
+# Pod Security Standards (for Kubernetes 1.25+)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: driftguard-prod
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

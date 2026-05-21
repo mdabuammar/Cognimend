@@ -1,0 +1,35 @@
+# Test dependencies for pytest
+# Install with: pip install -r tests/requirements-test.txt
+
+# Testing framework
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+pytest-xdist>=3.3.0
+pytest-timeout>=2.2.0
+pytest-mock>=3.12.0
+
+# HTTP client for testing
+httpx>=0.25.0
+
+# Async support
+anyio>=4.0.0
+trio>=0.23.0
+
+# Mocking
+responses>=0.24.0
+aioresponses>=0.7.5
+
+# Test data generation
+faker>=22.0.0
+factory-boy>=3.3.0
+
+# Coverage reporting
+coverage[toml]>=7.3.0
+
+# Performance testing
+locust>=2.20.0
+
+# Code quality (for test code)
+ruff>=0.1.0
+mypy>=1.7.0

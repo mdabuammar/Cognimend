@@ -1,0 +1,41 @@
+# =============================================================================
+# Qdrant PersistentVolume and PersistentVolumeClaim
+# =============================================================================
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: qdrant-pv
+  labels:
+    app.kubernetes.io/name: qdrant
+    app.kubernetes.io/component: storage
+    type: local
+spec:
+  storageClassName: standard
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /data/qdrant
+    type: DirectoryOrCreate
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qdrant-pvc
+  namespace: cognimend
+  labels:
+    app.kubernetes.io/name: qdrant
+    app.kubernetes.io/component: storage
+spec:
+  storageClassName: standard
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: qdrant

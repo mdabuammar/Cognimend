@@ -1,0 +1,135 @@
+# DriftGuard Frontend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: driftguard-frontend
+  namespace: driftguard
+  labels:
+    app: driftguard
+    component: frontend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: driftguard
+      component: frontend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: driftguard
+        component: frontend
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: driftguard
+                  component: frontend
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: frontend
+        image: driftguard/frontend:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: http
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        env:
+        - name: VITE_API_URL
+          valueFrom:
+            configMapKeyRef:
+              name: driftguard-config
+              key: api_url
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 20
+---
+# Frontend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: driftguard-frontend
+  namespace: driftguard
+  labels:
+    app: driftguard
+    component: frontend
+spec:
+  type: ClusterIP
+  selector:
+    app: driftguard
+    component: frontend
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+    name: http
+---
+# Frontend HPA
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: driftguard-frontend-hpa
+  namespace: driftguard
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: driftguard-frontend
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+      - type: Pods
+        value: 2
+        periodSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+---
+# Pod Disruption Budget
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: driftguard-frontend-pdb
+  namespace: driftguard
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: driftguard
+      component: frontend

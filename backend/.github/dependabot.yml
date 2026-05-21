@@ -1,0 +1,117 @@
+# Dependabot configuration for automated dependency updates
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates
+
+version: 2
+updates:
+  # Python dependencies - root
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "team-leads"
+    labels:
+      - "dependencies"
+      - "python"
+      - "automated"
+    commit-message:
+      prefix: "deps(python)"
+    groups:
+      # Group minor/patch updates together
+      python-minor:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Security updates get their own PRs
+      security:
+        applies-to: security-updates
+
+  # Python dependencies - services
+  - package-ecosystem: "pip"
+    directory: "/backend/services/upload"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "service-upload"
+
+  - package-ecosystem: "pip"
+    directory: "/backend/services/query"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "service-query"
+
+  - package-ecosystem: "pip"
+    directory: "/backend/services/controller"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "service-controller"
+
+  - package-ecosystem: "pip"
+    directory: "/backend/services/evaluation"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "service-evaluation"
+
+  - package-ecosystem: "pip"
+    directory: "/backend/services/drift_detector"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "service-drift"
+
+  - package-ecosystem: "pip"
+    directory: "/backend/services/telemetry"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "service-telemetry"
+
+  # Docker base images
+  - package-ecosystem: "docker"
+    directory: "/backend/services/upload"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "docker"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "ci"
+
+  # Frontend npm dependencies
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "frontend"
+      - "javascript"
+    groups:
+      npm-minor:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"

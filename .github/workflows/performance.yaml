@@ -1,0 +1,618 @@
+# =============================================================================
+# GitHub Actions Workflow: Performance/Load Testing
+# =============================================================================
+name: Performance Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: 'Target URL for load testing'
+        required: true
+        default: 'https://staging-api.cognimend.example.com'
+        type: string
+      duration:
+        description: 'Test duration in seconds'
+        required: true
+        default: '300'
+        type: string
+      max_vus:
+        description: 'Maximum virtual users'
+        required: true
+        default: '200'
+        type: string
+      ramp_up_time:
+        description: 'Ramp up time in seconds'
+        required: true
+        default: '60'
+        type: string
+  schedule:
+    # Run performance tests weekly on Sunday at 2 AM UTC
+    - cron: '0 2 * * 0'
+
+env:
+  RESULTS_DIR: performance-results
+
+jobs:
+  # ===========================================================================
+  # Job 1: K6 Load Test
+  # ===========================================================================
+  k6-load-test:
+    name: K6 Load Test
+    runs-on: ubuntu-latest
+    outputs:
+      p95_latency: ${{ steps.results.outputs.p95_latency }}
+      error_rate: ${{ steps.results.outputs.error_rate }}
+      requests_per_sec: ${{ steps.results.outputs.requests_per_sec }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create results directory
+        run: mkdir -p ${{ env.RESULTS_DIR }}
+
+      - name: Create K6 load test script
+        run: |
+          cat > k6-load-test.js << 'EOF'
+          import http from 'k6/http';
+          import { check, sleep, group } from 'k6';
+          import { Counter, Rate, Trend } from 'k6/metrics';
+          import { htmlReport } from "https://raw.githubusercontent.com/benc-uk/k6-reporter/main/dist/bundle.js";
+          import { textSummary } from "https://jslib.k6.io/k6-summary/0.0.1/index.js";
+
+          // Custom metrics
+          const queryErrors = new Counter('query_errors');
+          const uploadErrors = new Counter('upload_errors');
+          const successRate = new Rate('success_rate');
+          const queryLatency = new Trend('query_latency', true);
+          const uploadLatency = new Trend('upload_latency', true);
+
+          // Configuration from environment
+          const BASE_URL = __ENV.TARGET_URL || 'http://localhost:8002';
+          const MAX_VUS = parseInt(__ENV.MAX_VUS) || 200;
+          const DURATION = parseInt(__ENV.DURATION) || 300;
+          const RAMP_UP = parseInt(__ENV.RAMP_UP_TIME) || 60;
+
+          export const options = {
+            stages: [
+              // Ramp up
+              { duration: `${RAMP_UP}s`, target: MAX_VUS },
+              // Maintain load
+              { duration: `${DURATION}s`, target: MAX_VUS },
+              // Ramp down
+              { duration: '60s', target: 0 },
+            ],
+            thresholds: {
+              http_req_duration: ['p(95)<3000'],  // P95 under 3s
+              http_req_failed: ['rate<0.05'],     // Error rate under 5%
+              success_rate: ['rate>0.95'],        // Success rate over 95%
+              query_latency: ['p(95)<3000'],      // Query P95 under 3s
+            },
+            summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(90)', 'p(95)', 'p(99)', 'count'],
+          };
+
+          // Sample test data
+          const testQueries = [
+            'What is machine learning?',
+            'Explain neural networks',
+            'How does RAG work?',
+            'What are transformers in NLP?',
+            'Describe attention mechanisms',
+          ];
+
+          export default function () {
+            group('Query Service', function () {
+              const query = testQueries[Math.floor(Math.random() * testQueries.length)];
+              
+              const queryResponse = http.post(
+                `${BASE_URL}/query`,
+                JSON.stringify({ query: query, top_k: 5 }),
+                {
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'X-API-Key': __ENV.API_KEY || 'test-api-key',
+                  },
+                  timeout: '30s',
+                }
+              );
+
+              queryLatency.add(queryResponse.timings.duration);
+
+              const querySuccess = check(queryResponse, {
+                'query status is 200': (r) => r.status === 200,
+                'query has response': (r) => r.body && JSON.parse(r.body).answer,
+                'query latency < 3s': (r) => r.timings.duration < 3000,
+              });
+
+              if (!querySuccess) {
+                queryErrors.add(1);
+              }
+              successRate.add(querySuccess);
+
+              sleep(Math.random() * 2 + 1);  // Random 1-3s pause
+            });
+
+            group('Health Check', function () {
+              const healthResponse = http.get(`${BASE_URL}/health`, {
+                timeout: '5s',
+              });
+
+              check(healthResponse, {
+                'health check status is 200': (r) => r.status === 200,
+              });
+            });
+
+            // Occasionally test upload (10% of iterations)
+            if (Math.random() < 0.1) {
+              group('Upload Service', function () {
+                const uploadUrl = BASE_URL.replace(':8002', ':8001');
+                
+                const testContent = `Test document content ${Date.now()}`;
+                const formData = {
+                  file: http.file(testContent, 'test.txt', 'text/plain'),
+                };
+
+                const uploadResponse = http.post(
+                  `${uploadUrl}/upload`,
+                  formData,
+                  {
+                    headers: {
+                      'X-API-Key': __ENV.API_KEY || 'test-api-key',
+                    },
+                    timeout: '60s',
+                  }
+                );
+
+                uploadLatency.add(uploadResponse.timings.duration);
+
+                const uploadSuccess = check(uploadResponse, {
+                  'upload status is 200 or 201': (r) => r.status === 200 || r.status === 201,
+                });
+
+                if (!uploadSuccess) {
+                  uploadErrors.add(1);
+                }
+              });
+            }
+          }
+
+          export function handleSummary(data) {
+            return {
+              'performance-results/k6-summary.html': htmlReport(data),
+              'performance-results/k6-summary.json': JSON.stringify(data, null, 2),
+              stdout: textSummary(data, { indent: ' ', enableColors: true }),
+            };
+          }
+          EOF
+
+      - name: Install K6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6 -y
+
+      - name: Run K6 load test
+        run: |
+          k6 run \
+            --env TARGET_URL=${{ github.event.inputs.target_url || 'https://staging-api.cognimend.example.com' }} \
+            --env MAX_VUS=${{ github.event.inputs.max_vus || '200' }} \
+            --env DURATION=${{ github.event.inputs.duration || '300' }} \
+            --env RAMP_UP_TIME=${{ github.event.inputs.ramp_up_time || '60' }} \
+            --env API_KEY=${{ secrets.API_KEY }} \
+            --out json=${{ env.RESULTS_DIR }}/k6-results.json \
+            k6-load-test.js
+        continue-on-error: true
+
+      - name: Parse K6 results
+        id: results
+        run: |
+          if [ -f "${{ env.RESULTS_DIR }}/k6-summary.json" ]; then
+            P95=$(cat ${{ env.RESULTS_DIR }}/k6-summary.json | jq -r '.metrics.http_req_duration.values["p(95)"]' || echo "0")
+            ERROR_RATE=$(cat ${{ env.RESULTS_DIR }}/k6-summary.json | jq -r '.metrics.http_req_failed.values.rate' || echo "0")
+            RPS=$(cat ${{ env.RESULTS_DIR }}/k6-summary.json | jq -r '.metrics.http_reqs.values.rate' || echo "0")
+            
+            echo "p95_latency=$P95" >> $GITHUB_OUTPUT
+            echo "error_rate=$ERROR_RATE" >> $GITHUB_OUTPUT
+            echo "requests_per_sec=$RPS" >> $GITHUB_OUTPUT
+            
+            echo "📊 K6 Results:"
+            echo "  P95 Latency: ${P95}ms"
+            echo "  Error Rate: ${ERROR_RATE}"
+            echo "  Requests/sec: ${RPS}"
+          else
+            echo "p95_latency=0" >> $GITHUB_OUTPUT
+            echo "error_rate=1" >> $GITHUB_OUTPUT
+            echo "requests_per_sec=0" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload K6 results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: k6-results
+          path: ${{ env.RESULTS_DIR }}/
+          retention-days: 30
+
+  # ===========================================================================
+  # Job 2: Locust Load Test
+  # ===========================================================================
+  locust-load-test:
+    name: Locust Load Test
+    runs-on: ubuntu-latest
+    outputs:
+      avg_response_time: ${{ steps.results.outputs.avg_response_time }}
+      rps: ${{ steps.results.outputs.rps }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Locust
+        run: |
+          pip install locust locust-plugins
+
+      - name: Create Locust test file
+        run: |
+          cat > locustfile.py << 'EOF'
+          import random
+          import json
+          from locust import HttpUser, task, between, events
+          from locust.runners import MasterRunner
+          import time
+
+          class RAGUser(HttpUser):
+              """Simulates a user interacting with the RAG system."""
+              
+              wait_time = between(1, 3)
+              
+              queries = [
+                  "What is machine learning?",
+                  "Explain neural networks",
+                  "How does RAG work?",
+                  "What are transformers in NLP?",
+                  "Describe attention mechanisms",
+                  "What is natural language processing?",
+                  "How do embeddings work?",
+                  "Explain vector databases",
+              ]
+              
+              def on_start(self):
+                  """Setup before starting tasks."""
+                  self.headers = {
+                      "Content-Type": "application/json",
+                      "X-API-Key": "test-api-key",
+                  }
+              
+              @task(10)
+              def query_rag(self):
+                  """Main query task - weighted heavily."""
+                  query = random.choice(self.queries)
+                  
+                  with self.client.post(
+                      "/query",
+                      json={"query": query, "top_k": 5},
+                      headers=self.headers,
+                      catch_response=True,
+                      name="/query"
+                  ) as response:
+                      if response.status_code == 200:
+                          try:
+                              data = response.json()
+                              if "answer" in data:
+                                  response.success()
+                              else:
+                                  response.failure("No answer in response")
+                          except json.JSONDecodeError:
+                              response.failure("Invalid JSON response")
+                      else:
+                          response.failure(f"Status code: {response.status_code}")
+              
+              @task(2)
+              def health_check(self):
+                  """Health check task."""
+                  with self.client.get(
+                      "/health",
+                      catch_response=True,
+                      name="/health"
+                  ) as response:
+                      if response.status_code == 200:
+                          response.success()
+                      else:
+                          response.failure(f"Health check failed: {response.status_code}")
+              
+              @task(1)
+              def get_metrics(self):
+                  """Metrics endpoint task."""
+                  with self.client.get(
+                      "/metrics/prometheus",
+                      catch_response=True,
+                      name="/metrics"
+                  ) as response:
+                      if response.status_code in [200, 404]:
+                          response.success()
+                      else:
+                          response.failure(f"Metrics failed: {response.status_code}")
+
+
+          class UploadUser(HttpUser):
+              """Simulates document upload users."""
+              
+              wait_time = between(5, 15)
+              weight = 1  # Less frequent than query users
+              
+              def on_start(self):
+                  self.headers = {
+                      "X-API-Key": "test-api-key",
+                  }
+              
+              @task
+              def upload_document(self):
+                  """Upload a test document."""
+                  content = f"Test document content generated at {time.time()}"
+                  files = {
+                      "file": ("test_doc.txt", content, "text/plain")
+                  }
+                  
+                  # Update host for upload service
+                  upload_host = self.host.replace(":8002", ":8001")
+                  
+                  with self.client.post(
+                      f"{upload_host}/upload",
+                      files=files,
+                      headers=self.headers,
+                      catch_response=True,
+                      name="/upload"
+                  ) as response:
+                      if response.status_code in [200, 201]:
+                          response.success()
+                      else:
+                          response.failure(f"Upload failed: {response.status_code}")
+
+
+          @events.quitting.add_listener
+          def on_quitting(environment, **kwargs):
+              """Generate final statistics on exit."""
+              if isinstance(environment.runner, MasterRunner):
+                  print("\n" + "="*60)
+                  print("FINAL PERFORMANCE SUMMARY")
+                  print("="*60)
+          EOF
+
+      - name: Create results directory
+        run: mkdir -p ${{ env.RESULTS_DIR }}/locust
+
+      - name: Run Locust load test
+        run: |
+          locust \
+            --headless \
+            --host=${{ github.event.inputs.target_url || 'https://staging-api.cognimend.example.com' }} \
+            --users=${{ github.event.inputs.max_vus || '200' }} \
+            --spawn-rate=10 \
+            --run-time=${{ github.event.inputs.duration || '300' }}s \
+            --html=${{ env.RESULTS_DIR }}/locust/report.html \
+            --csv=${{ env.RESULTS_DIR }}/locust/results \
+            --only-summary
+        continue-on-error: true
+
+      - name: Parse Locust results
+        id: results
+        run: |
+          if [ -f "${{ env.RESULTS_DIR }}/locust/results_stats.csv" ]; then
+            AVG_RESPONSE=$(tail -1 "${{ env.RESULTS_DIR }}/locust/results_stats.csv" | cut -d',' -f6 || echo "0")
+            RPS=$(tail -1 "${{ env.RESULTS_DIR }}/locust/results_stats.csv" | cut -d',' -f10 || echo "0")
+            
+            echo "avg_response_time=$AVG_RESPONSE" >> $GITHUB_OUTPUT
+            echo "rps=$RPS" >> $GITHUB_OUTPUT
+            
+            echo "📊 Locust Results:"
+            echo "  Avg Response Time: ${AVG_RESPONSE}ms"
+            echo "  Requests/sec: ${RPS}"
+          else
+            echo "avg_response_time=0" >> $GITHUB_OUTPUT
+            echo "rps=0" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload Locust results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: locust-results
+          path: ${{ env.RESULTS_DIR }}/locust/
+          retention-days: 30
+
+  # ===========================================================================
+  # Job 3: Analyze Results
+  # ===========================================================================
+  analyze-results:
+    name: Analyze Results
+    runs-on: ubuntu-latest
+    needs: [k6-load-test, locust-load-test]
+    outputs:
+      passed: ${{ steps.analyze.outputs.passed }}
+      regression: ${{ steps.analyze.outputs.regression }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download K6 results
+        uses: actions/download-artifact@v4
+        with:
+          name: k6-results
+          path: k6-results
+
+      - name: Download Locust results
+        uses: actions/download-artifact@v4
+        with:
+          name: locust-results
+          path: locust-results
+
+      - name: Load baseline metrics
+        id: baseline
+        run: |
+          if [ -f ".github/performance-baseline.json" ]; then
+            BASELINE_P95=$(cat .github/performance-baseline.json | jq -r '.p95_latency' || echo "3000")
+            BASELINE_ERROR=$(cat .github/performance-baseline.json | jq -r '.error_rate' || echo "0.05")
+            BASELINE_RPS=$(cat .github/performance-baseline.json | jq -r '.requests_per_sec' || echo "50")
+          else
+            BASELINE_P95="3000"
+            BASELINE_ERROR="0.05"
+            BASELINE_RPS="50"
+          fi
+          
+          echo "p95=$BASELINE_P95" >> $GITHUB_OUTPUT
+          echo "error_rate=$BASELINE_ERROR" >> $GITHUB_OUTPUT
+          echo "rps=$BASELINE_RPS" >> $GITHUB_OUTPUT
+
+      - name: Analyze results
+        id: analyze
+        run: |
+          # Get current results
+          CURRENT_P95="${{ needs.k6-load-test.outputs.p95_latency }}"
+          CURRENT_ERROR="${{ needs.k6-load-test.outputs.error_rate }}"
+          CURRENT_RPS="${{ needs.k6-load-test.outputs.requests_per_sec }}"
+          
+          # Get baseline
+          BASELINE_P95="${{ steps.baseline.outputs.p95 }}"
+          BASELINE_ERROR="${{ steps.baseline.outputs.error_rate }}"
+          
+          # Check thresholds
+          PASSED=true
+          REGRESSION=false
+          
+          # P95 latency check (threshold: 3000ms)
+          if (( $(echo "$CURRENT_P95 > 3000" | bc -l) )); then
+            echo "❌ P95 latency ($CURRENT_P95 ms) exceeds threshold (3000ms)"
+            PASSED=false
+          else
+            echo "✅ P95 latency ($CURRENT_P95 ms) within threshold"
+          fi
+          
+          # Error rate check (threshold: 5%)
+          if (( $(echo "$CURRENT_ERROR > 0.05" | bc -l) )); then
+            echo "❌ Error rate ($CURRENT_ERROR) exceeds threshold (0.05)"
+            PASSED=false
+          else
+            echo "✅ Error rate ($CURRENT_ERROR) within threshold"
+          fi
+          
+          # Regression check (10% degradation from baseline)
+          P95_INCREASE=$(echo "scale=2; ($CURRENT_P95 - $BASELINE_P95) / $BASELINE_P95" | bc -l)
+          if (( $(echo "$P95_INCREASE > 0.10" | bc -l) )); then
+            echo "⚠️ Performance regression detected: P95 increased by ${P95_INCREASE}%"
+            REGRESSION=true
+          fi
+          
+          echo "passed=$PASSED" >> $GITHUB_OUTPUT
+          echo "regression=$REGRESSION" >> $GITHUB_OUTPUT
+
+      - name: Generate performance report
+        run: |
+          cat > performance-report.md << EOF
+          # Performance Test Report
+          
+          **Date:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          **Target:** ${{ github.event.inputs.target_url || 'staging' }}
+          **Duration:** ${{ github.event.inputs.duration || '300' }}s
+          **Max VUs:** ${{ github.event.inputs.max_vus || '200' }}
+          
+          ## K6 Results
+          
+          | Metric | Value | Threshold | Status |
+          |--------|-------|-----------|--------|
+          | P95 Latency | ${{ needs.k6-load-test.outputs.p95_latency }}ms | 3000ms | $([[ "${{ needs.k6-load-test.outputs.p95_latency }}" < "3000" ]] && echo "✅" || echo "❌") |
+          | Error Rate | ${{ needs.k6-load-test.outputs.error_rate }} | 0.05 | $([[ "${{ needs.k6-load-test.outputs.error_rate }}" < "0.05" ]] && echo "✅" || echo "❌") |
+          | Requests/sec | ${{ needs.k6-load-test.outputs.requests_per_sec }} | - | ℹ️ |
+          
+          ## Locust Results
+          
+          | Metric | Value |
+          |--------|-------|
+          | Avg Response Time | ${{ needs.locust-load-test.outputs.avg_response_time }}ms |
+          | Requests/sec | ${{ needs.locust-load-test.outputs.rps }} |
+          
+          ## Analysis
+          
+          - **Thresholds Passed:** ${{ steps.analyze.outputs.passed }}
+          - **Regression Detected:** ${{ steps.analyze.outputs.regression }}
+          
+          EOF
+          
+          cat performance-report.md
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('performance-report.md', 'utf8');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: report
+            });
+
+      - name: Upload performance report
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-report
+          path: performance-report.md
+          retention-days: 90
+
+      - name: Fail if thresholds exceeded
+        if: steps.analyze.outputs.passed == 'false'
+        run: |
+          echo "❌ Performance thresholds exceeded!"
+          exit 1
+
+  # ===========================================================================
+  # Job 4: Update Performance Baseline
+  # ===========================================================================
+  update-baseline:
+    name: Update Baseline
+    runs-on: ubuntu-latest
+    needs: [analyze-results]
+    if: github.ref == 'refs/heads/main' && needs.analyze-results.outputs.passed == 'true'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update baseline file
+        run: |
+          mkdir -p .github
+          cat > .github/performance-baseline.json << EOF
+          {
+            "updated_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+            "commit": "${{ github.sha }}",
+            "p95_latency": ${{ needs.k6-load-test.outputs.p95_latency }},
+            "error_rate": ${{ needs.k6-load-test.outputs.error_rate }},
+            "requests_per_sec": ${{ needs.k6-load-test.outputs.requests_per_sec }},
+            "test_config": {
+              "duration": "${{ github.event.inputs.duration || '300' }}",
+              "max_vus": "${{ github.event.inputs.max_vus || '200' }}",
+              "ramp_up_time": "${{ github.event.inputs.ramp_up_time || '60' }}"
+            }
+          }
+          EOF
+
+      - name: Commit baseline update
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add .github/performance-baseline.json
+          git diff --staged --quiet || git commit -m "chore: update performance baseline [skip ci]"
+          git push

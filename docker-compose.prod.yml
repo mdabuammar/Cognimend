@@ -1,0 +1,371 @@
+version: '3.8'
+x-logging: &id001
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-cognimend}
+    volumes:
+    - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-cognimend}
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+    logging: *id001
+    networks:
+    - cognimend-network
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD:-redispassword}
+    volumes:
+    - redis_data:/data
+    healthcheck:
+      test:
+      - CMD
+      - redis-cli
+      - -a
+      - ${REDIS_PASSWORD:-redispassword}
+      - ping
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+    logging: *id001
+    networks:
+    - cognimend-network
+  qdrant:
+    image: qdrant/qdrant:latest
+    volumes:
+    - qdrant_data:/qdrant/storage
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:6333/healthz
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+    logging: *id001
+    networks:
+    - cognimend-network
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
+    volumes:
+    - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test:
+      - CMD
+      - rabbitmq-diagnostics
+      - -q
+      - ping
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+    logging: *id001
+    networks:
+    - cognimend-network
+  auth-service:
+    build:
+      context: ./backend/services/auth
+      dockerfile: Dockerfile
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: always
+    logging: *id001
+    networks:
+    - cognimend-network
+    environment:
+    - POSTGRES_HOST=postgres
+    - QDRANT_HOST=qdrant
+    - REDIS_HOST=redis
+    - RABBITMQ_HOST=rabbitmq
+    - AUTH_SERVICE_URL=http://auth-service:8000
+    - UPLOAD_SERVICE_URL=http://upload-service:8001
+    - QUERY_SERVICE_URL=http://query-service:8002
+    - TELEMETRY_SERVICE_URL=http://telemetry-service:8003
+    - DRIFT_DETECTOR_URL=http://drift-detector:8004
+    - CONTROLLER_URL=http://controller-service:8005
+    - EVALUATION_URL=http://evaluation-service:8006
+  upload-service:
+    build:
+      context: ./backend
+      dockerfile: services/upload/Dockerfile
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: always
+    logging: *id001
+    networks:
+    - cognimend-network
+    environment:
+    - POSTGRES_HOST=postgres
+    - QDRANT_HOST=qdrant
+    - REDIS_HOST=redis
+    - RABBITMQ_HOST=rabbitmq
+    - AUTH_SERVICE_URL=http://auth-service:8000
+    - UPLOAD_SERVICE_URL=http://upload-service:8001
+    - QUERY_SERVICE_URL=http://query-service:8002
+    - TELEMETRY_SERVICE_URL=http://telemetry-service:8003
+    - DRIFT_DETECTOR_URL=http://drift-detector:8004
+    - CONTROLLER_URL=http://controller-service:8005
+    - EVALUATION_URL=http://evaluation-service:8006
+  query-service:
+    build:
+      context: ./backend
+      dockerfile: services/query/Dockerfile
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: always
+    logging: *id001
+    networks:
+    - cognimend-network
+    environment:
+    - POSTGRES_HOST=postgres
+    - QDRANT_HOST=qdrant
+    - REDIS_HOST=redis
+    - RABBITMQ_HOST=rabbitmq
+    - AUTH_SERVICE_URL=http://auth-service:8000
+    - UPLOAD_SERVICE_URL=http://upload-service:8001
+    - QUERY_SERVICE_URL=http://query-service:8002
+    - TELEMETRY_SERVICE_URL=http://telemetry-service:8003
+    - DRIFT_DETECTOR_URL=http://drift-detector:8004
+    - CONTROLLER_URL=http://controller-service:8005
+    - EVALUATION_URL=http://evaluation-service:8006
+  telemetry-service:
+    build:
+      context: ./backend/services/telemetry
+      dockerfile: Dockerfile
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: always
+    logging: *id001
+    networks:
+    - cognimend-network
+    environment:
+    - POSTGRES_HOST=postgres
+    - QDRANT_HOST=qdrant
+    - REDIS_HOST=redis
+    - RABBITMQ_HOST=rabbitmq
+    - AUTH_SERVICE_URL=http://auth-service:8000
+    - UPLOAD_SERVICE_URL=http://upload-service:8001
+    - QUERY_SERVICE_URL=http://query-service:8002
+    - TELEMETRY_SERVICE_URL=http://telemetry-service:8003
+    - DRIFT_DETECTOR_URL=http://drift-detector:8004
+    - CONTROLLER_URL=http://controller-service:8005
+    - EVALUATION_URL=http://evaluation-service:8006
+  drift-detector:
+    build:
+      context: ./backend/services/drift_detector
+      dockerfile: Dockerfile
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: always
+    logging: *id001
+    networks:
+    - cognimend-network
+    environment:
+    - POSTGRES_HOST=postgres
+    - QDRANT_HOST=qdrant
+    - REDIS_HOST=redis
+    - RABBITMQ_HOST=rabbitmq
+    - AUTH_SERVICE_URL=http://auth-service:8000
+    - UPLOAD_SERVICE_URL=http://upload-service:8001
+    - QUERY_SERVICE_URL=http://query-service:8002
+    - TELEMETRY_SERVICE_URL=http://telemetry-service:8003
+    - DRIFT_DETECTOR_URL=http://drift-detector:8004
+    - CONTROLLER_URL=http://controller-service:8005
+    - EVALUATION_URL=http://evaluation-service:8006
+  controller-service:
+    build:
+      context: ./backend/services/controller
+      dockerfile: Dockerfile
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: always
+    logging: *id001
+    networks:
+    - cognimend-network
+    environment:
+    - POSTGRES_HOST=postgres
+    - QDRANT_HOST=qdrant
+    - REDIS_HOST=redis
+    - RABBITMQ_HOST=rabbitmq
+    - AUTH_SERVICE_URL=http://auth-service:8000
+    - UPLOAD_SERVICE_URL=http://upload-service:8001
+    - QUERY_SERVICE_URL=http://query-service:8002
+    - TELEMETRY_SERVICE_URL=http://telemetry-service:8003
+    - DRIFT_DETECTOR_URL=http://drift-detector:8004
+    - CONTROLLER_URL=http://controller-service:8005
+    - EVALUATION_URL=http://evaluation-service:8006
+  evaluation-service:
+    build:
+      context: ./backend/services/evaluation
+      dockerfile: Dockerfile
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    restart: always
+    logging: *id001
+    networks:
+    - cognimend-network
+    environment:
+    - POSTGRES_HOST=postgres
+    - QDRANT_HOST=qdrant
+    - REDIS_HOST=redis
+    - RABBITMQ_HOST=rabbitmq
+    - AUTH_SERVICE_URL=http://auth-service:8000
+    - UPLOAD_SERVICE_URL=http://upload-service:8001
+    - QUERY_SERVICE_URL=http://query-service:8002
+    - TELEMETRY_SERVICE_URL=http://telemetry-service:8003
+    - DRIFT_DETECTOR_URL=http://drift-detector:8004
+    - CONTROLLER_URL=http://controller-service:8005
+    - EVALUATION_URL=http://evaluation-service:8006
+#  super-admin:
+#    build:
+#      context: ./backend/services/super_admin
+#      dockerfile: Dockerfile
+#    env_file: .env
+#    depends_on:
+#      postgres:
+#        condition: service_healthy
+#    restart: always
+#    logging: *id001
+#    networks:
+#    - cognimend-network
+#    environment:
+#    - POSTGRES_HOST=postgres
+#  workspace-admin:
+#    build:
+#      context: ./backend/services/workspace_admin
+#      dockerfile: Dockerfile
+#    env_file: .env
+#    depends_on:
+#      postgres:
+#        condition: service_healthy
+#    restart: always
+#    logging: *id001
+#    networks:
+#    - cognimend-network
+#    environment:
+#    - POSTGRES_HOST=postgres
+  api-gateway:
+    build:
+      context: ./backend/services/gateway
+      dockerfile: Dockerfile
+    env_file: .env
+    ports:
+    - 8080:8080
+    depends_on:
+    - auth-service
+    - upload-service
+    - query-service
+    - telemetry-service
+    - drift-detector
+    - controller-service
+    - evaluation-service
+#    - super-admin
+#    - workspace-admin
+    restart: always
+    logging: *id001
+    networks:
+    - cognimend-network
+    environment:
+    - POSTGRES_HOST=postgres
+    - QDRANT_HOST=qdrant
+    - REDIS_HOST=redis
+    - RABBITMQ_HOST=rabbitmq
+    - AUTH_SERVICE_URL=http://auth-service:8000
+    - UPLOAD_SERVICE_URL=http://upload-service:8001
+    - QUERY_SERVICE_URL=http://query-service:8002
+    - TELEMETRY_SERVICE_URL=http://telemetry-service:8003
+    - DRIFT_DETECTOR_URL=http://drift-detector:8004
+    - CONTROLLER_URL=http://controller-service:8005
+    - EVALUATION_URL=http://evaluation-service:8006
+#    - SUPER_ADMIN_URL=http://super-admin:8008
+#    - WORKSPACE_ADMIN_URL=http://workspace-admin:8009
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+    - VITE_API_URL=https://api.yourdomain.com
+    ports:
+    - 80:80
+    restart: always
+    logging: *id001
+    networks:
+    - cognimend-network
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+    - ./infrastructure/docker/prometheus.yml:/etc/prometheus/prometheus.yml
+    - ./infrastructure/docker/alerts.yml:/etc/prometheus/rules/alerts.yml
+    - prometheus_data:/prometheus
+    ports:
+    - 9090:9090
+    restart: always
+    networks:
+    - cognimend-network
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+    - GF_SECURITY_ADMIN_PASSWORD=
+    ports:
+    - 3000:3000
+    volumes:
+    - grafana_data:/var/lib/grafana
+    restart: always
+    networks:
+    - cognimend-network
+networks:
+  cognimend-network:
+    driver: bridge
+volumes:
+  postgres_data: null
+  redis_data: null
+  qdrant_data: null
+  rabbitmq_data: null
+  prometheus_data: null
+  grafana_data: null

@@ -1,0 +1,278 @@
+# =============================================================================
+# DriftGuard Network Policies
+# =============================================================================
+# Implements zero-trust network security within the cluster.
+
+# Default deny all ingress and egress
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: driftguard-prod
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# Allow DNS resolution for all pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: driftguard-prod
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+---
+# Controller Service Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: driftguard-controller-netpol
+  namespace: driftguard-prod
+spec:
+  podSelector:
+    matchLabels:
+      app: driftguard-controller
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow from ingress controller
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8005
+    # Allow from Prometheus for scraping
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+          podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
+        - protocol: TCP
+          port: 8005
+  egress:
+    # Allow to internal services
+    - to:
+        - podSelector:
+            matchLabels:
+              app: driftguard-query
+      ports:
+        - protocol: TCP
+          port: 8002
+    - to:
+        - podSelector:
+            matchLabels:
+              app: driftguard-upload
+      ports:
+        - protocol: TCP
+          port: 8001
+    - to:
+        - podSelector:
+            matchLabels:
+              app: driftguard-evaluation
+      ports:
+        - protocol: TCP
+          port: 8003
+    - to:
+        - podSelector:
+            matchLabels:
+              app: driftguard-drift
+      ports:
+        - protocol: TCP
+          port: 8004
+    - to:
+        - podSelector:
+            matchLabels:
+              app: driftguard-telemetry
+      ports:
+        - protocol: TCP
+          port: 8006
+    # Allow to Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    # Allow to Jaeger
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+          podSelector:
+            matchLabels:
+              app: jaeger
+      ports:
+        - protocol: UDP
+          port: 6831
+
+---
+# Query Service Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: driftguard-query-netpol
+  namespace: driftguard-prod
+spec:
+  podSelector:
+    matchLabels:
+      app: driftguard-query
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow from controller
+    - from:
+        - podSelector:
+            matchLabels:
+              app: driftguard-controller
+      ports:
+        - protocol: TCP
+          port: 8002
+    # Allow from Prometheus
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8002
+  egress:
+    # Allow to Qdrant
+    - to:
+        - podSelector:
+            matchLabels:
+              app: qdrant
+      ports:
+        - protocol: TCP
+          port: 6333
+    # Allow to PostgreSQL
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Allow to Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    # Allow external API calls (OpenRouter)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+
+---
+# Upload Service Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: driftguard-upload-netpol
+  namespace: driftguard-prod
+spec:
+  podSelector:
+    matchLabels:
+      app: driftguard-upload
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: driftguard-controller
+      ports:
+        - protocol: TCP
+          port: 8001
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8001
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: qdrant
+      ports:
+        - protocol: TCP
+          port: 6333
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+
+---
+# Infrastructure Services (Redis, PostgreSQL, Qdrant)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: infrastructure-netpol
+  namespace: driftguard-prod
+spec:
+  podSelector:
+    matchLabels:
+      tier: infrastructure
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow from DriftGuard services only
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - driftguard-controller
+                  - driftguard-query
+                  - driftguard-upload
+                  - driftguard-evaluation
+                  - driftguard-drift
+                  - driftguard-telemetry

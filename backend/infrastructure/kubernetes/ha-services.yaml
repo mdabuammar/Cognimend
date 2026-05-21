@@ -1,0 +1,563 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: driftguard
+  labels:
+    app: driftguard
+    environment: production
+---
+# ConfigMap for shared configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: driftguard-config
+  namespace: driftguard
+data:
+  # Database
+  POSTGRES_HOST: "postgres-primary.driftguard.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "cognimend"
+  
+  # Redis
+  REDIS_HOST: "redis.driftguard.svc.cluster.local"
+  REDIS_PORT: "6379"
+  
+  # Qdrant
+  QDRANT_HOST: "qdrant.driftguard.svc.cluster.local"
+  QDRANT_PORT: "6333"
+  
+  # Service URLs
+  UPLOAD_SERVICE_URL: "http://upload-service:8001"
+  QUERY_SERVICE_URL: "http://query-service:8002"
+  CONTROLLER_SERVICE_URL: "http://controller-service:8003"
+  
+  # Logging
+  LOG_LEVEL: "INFO"
+  
+  # CORS
+  CORS_ORIGINS: "https://driftguard.example.com"
+---
+# Secret for sensitive data
+# ⚠️ SECURITY: Template file - inject real values via External Secrets or CI/CD
+apiVersion: v1
+kind: Secret
+metadata:
+  name: driftguard-secrets
+  namespace: driftguard
+  annotations:
+    security.driftguard.io/template: "true"
+type: Opaque
+stringData:
+  POSTGRES_USER: "${POSTGRES_USER:-driftguard}"
+  POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?ERROR-PASSWORD_REQUIRED}"
+  OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:?ERROR-API_KEY_REQUIRED}"
+  REDIS_PASSWORD: "${REDIS_PASSWORD}"
+---
+# Query Service Deployment - High Availability
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: query-service
+  namespace: driftguard
+  labels:
+    app: driftguard
+    component: query-service
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: driftguard
+      component: query-service
+  template:
+    metadata:
+      labels:
+        app: driftguard
+        component: query-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8002"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Anti-affinity to spread across nodes
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: driftguard
+                  component: query-service
+              topologyKey: kubernetes.io/hostname
+          - weight: 50
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: driftguard
+                  component: query-service
+              topologyKey: topology.kubernetes.io/zone
+      
+      # Graceful termination
+      terminationGracePeriodSeconds: 45
+      
+      containers:
+      - name: query-service
+        image: driftguard/query-service:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8002
+          name: http
+        
+        envFrom:
+        - configMapRef:
+            name: driftguard-config
+        - secretRef:
+            name: driftguard-secrets
+        
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        
+        # Liveness probe - is the service alive?
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 8002
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        # Readiness probe - can the service accept traffic?
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8002
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        
+        # Startup probe - has the service finished starting?
+        startupProbe:
+          httpGet:
+            path: /health/startup
+            port: 8002
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 30  # Allow up to 150 seconds for startup
+        
+        # Lifecycle hooks for graceful shutdown
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 5"]  # Allow time for load balancer to remove
+---
+# Query Service - Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: query-service
+  namespace: driftguard
+  labels:
+    app: driftguard
+    component: query-service
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8002
+    targetPort: 8002
+    protocol: TCP
+    name: http
+  selector:
+    app: driftguard
+    component: query-service
+---
+# Upload Service Deployment - High Availability
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: upload-service
+  namespace: driftguard
+  labels:
+    app: driftguard
+    component: upload-service
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: driftguard
+      component: upload-service
+  template:
+    metadata:
+      labels:
+        app: driftguard
+        component: upload-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8001"
+        prometheus.io/path: "/metrics"
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: driftguard
+                  component: upload-service
+              topologyKey: kubernetes.io/hostname
+      
+      terminationGracePeriodSeconds: 60  # Longer for uploads
+      
+      containers:
+      - name: upload-service
+        image: driftguard/upload-service:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8001
+          name: http
+        
+        envFrom:
+        - configMapRef:
+            name: driftguard-config
+        - secretRef:
+            name: driftguard-secrets
+        
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 8001
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8001
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        
+        startupProbe:
+          httpGet:
+            path: /health/startup
+            port: 8001
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          failureThreshold: 30
+        
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 10"]
+        
+        volumeMounts:
+        - name: upload-storage
+          mountPath: /data/uploads
+      
+      volumes:
+      - name: upload-storage
+        persistentVolumeClaim:
+          claimName: upload-storage-pvc
+---
+# Upload Service - Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: upload-service
+  namespace: driftguard
+  labels:
+    app: driftguard
+    component: upload-service
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8001
+    targetPort: 8001
+    protocol: TCP
+    name: http
+  selector:
+    app: driftguard
+    component: upload-service
+---
+# Controller Service Deployment - High Availability
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controller-service
+  namespace: driftguard
+  labels:
+    app: driftguard
+    component: controller-service
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: driftguard
+      component: controller-service
+  template:
+    metadata:
+      labels:
+        app: driftguard
+        component: controller-service
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: driftguard
+                  component: controller-service
+              topologyKey: kubernetes.io/hostname
+      
+      terminationGracePeriodSeconds: 30
+      
+      containers:
+      - name: controller-service
+        image: driftguard/controller-service:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8003
+          name: http
+        
+        envFrom:
+        - configMapRef:
+            name: driftguard-config
+        - secretRef:
+            name: driftguard-secrets
+        
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 8003
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8003
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+---
+# Controller Service - Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: controller-service
+  namespace: driftguard
+  labels:
+    app: driftguard
+    component: controller-service
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8003
+    targetPort: 8003
+    protocol: TCP
+    name: http
+  selector:
+    app: driftguard
+    component: controller-service
+---
+# Pod Disruption Budgets - Ensure minimum availability during maintenance
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: query-service-pdb
+  namespace: driftguard
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: driftguard
+      component: query-service
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: upload-service-pdb
+  namespace: driftguard
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: driftguard
+      component: upload-service
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: controller-service-pdb
+  namespace: driftguard
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: driftguard
+      component: controller-service
+---
+# Horizontal Pod Autoscaler for Query Service
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: query-service-hpa
+  namespace: driftguard
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: query-service
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Pods
+        value: 1
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+---
+# Horizontal Pod Autoscaler for Upload Service
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: upload-service-hpa
+  namespace: driftguard
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: upload-service
+  minReplicas: 3
+  maxReplicas: 8
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+---
+# Ingress for external access
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: driftguard-ingress
+  namespace: driftguard
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  tls:
+  - hosts:
+    - driftguard.example.com
+    - api.driftguard.example.com
+    secretName: driftguard-tls
+  rules:
+  - host: driftguard.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend
+            port:
+              number: 80
+  - host: api.driftguard.example.com
+    http:
+      paths:
+      - path: /upload
+        pathType: Prefix
+        backend:
+          service:
+            name: upload-service
+            port:
+              number: 8001
+      - path: /query
+        pathType: Prefix
+        backend:
+          service:
+            name: query-service
+            port:
+              number: 8002
+      - path: /controller
+        pathType: Prefix
+        backend:
+          service:
+            name: controller-service
+            port:
+              number: 8003

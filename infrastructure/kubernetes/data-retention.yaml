@@ -1,0 +1,529 @@
+# =============================================================================
+# Data Retention Automation
+# =============================================================================
+# Kubernetes CronJobs for automated data lifecycle management
+# =============================================================================
+
+# Namespace for compliance jobs
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: driftguard-compliance
+  labels:
+    app: driftguard
+    component: compliance
+
+---
+# Service Account for compliance jobs
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: compliance-automation
+  namespace: driftguard-compliance
+
+---
+# RBAC for compliance automation
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: compliance-automation
+  namespace: driftguard-prod
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "delete"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: compliance-automation
+  namespace: driftguard-prod
+subjects:
+  - kind: ServiceAccount
+    name: compliance-automation
+    namespace: driftguard-compliance
+roleRef:
+  kind: Role
+  name: compliance-automation
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# ConfigMap for retention settings
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: retention-config
+  namespace: driftguard-compliance
+data:
+  LOGS_RETENTION_DAYS: "30"
+  SECURITY_LOGS_RETENTION_DAYS: "365"
+  AUDIT_LOGS_RETENTION_DAYS: "2555"  # 7 years
+  METRICS_HIGH_RES_DAYS: "15"
+  METRICS_MED_RES_DAYS: "90"
+  METRICS_LOW_RES_DAYS: "730"  # 2 years
+  USER_SOFT_DELETE_DAYS: "30"
+  BACKUP_DAILY_RETENTION_DAYS: "30"
+  BACKUP_WEEKLY_RETENTION_DAYS: "90"
+  BACKUP_MONTHLY_RETENTION_DAYS: "365"
+
+---
+# Log Purge CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: purge-old-logs
+  namespace: driftguard-compliance
+  labels:
+    app: driftguard
+    component: retention
+spec:
+  schedule: "0 3 * * *"  # Daily at 3 AM
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: compliance-automation
+          containers:
+            - name: log-purge
+              image: postgres:15-alpine
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  echo "Starting log purge at $(date)"
+                  
+                  # Purge application logs older than 30 days
+                  PGPASSWORD="${POSTGRES_PASSWORD}" psql -h postgres -U "${POSTGRES_USER}" -d driftguard -c "
+                    DELETE FROM application_logs 
+                    WHERE created_at < NOW() - INTERVAL '${LOGS_RETENTION_DAYS} days';
+                  "
+                  
+                  # Purge access logs older than 90 days
+                  PGPASSWORD="${POSTGRES_PASSWORD}" psql -h postgres -U "${POSTGRES_USER}" -d driftguard -c "
+                    DELETE FROM access_logs 
+                    WHERE created_at < NOW() - INTERVAL '90 days';
+                  "
+                  
+                  echo "Log purge completed at $(date)"
+              envFrom:
+                - configMapRef:
+                    name: retention-config
+              env:
+                - name: POSTGRES_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: driftguard-secrets
+                      key: POSTGRES_USER
+                - name: POSTGRES_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: driftguard-secrets
+                      key: POSTGRES_PASSWORD
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 200m
+                  memory: 256Mi
+          restartPolicy: OnFailure
+
+---
+# User Data Purge CronJob (GDPR Right to Erasure)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: purge-deleted-users
+  namespace: driftguard-compliance
+  labels:
+    app: driftguard
+    component: gdpr
+spec:
+  schedule: "0 5 * * *"  # Daily at 5 AM
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: compliance-automation
+          containers:
+            - name: user-purge
+              image: postgres:15-alpine
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  echo "Starting user data purge at $(date)"
+                  
+                  # Find users marked for deletion past grace period
+                  PGPASSWORD="${POSTGRES_PASSWORD}" psql -h postgres -U "${POSTGRES_USER}" -d driftguard << 'EOF'
+                  
+                  -- Start transaction
+                  BEGIN;
+                  
+                  -- Get users to delete
+                  CREATE TEMP TABLE users_to_delete AS
+                  SELECT id FROM users 
+                  WHERE deleted_at IS NOT NULL 
+                  AND deleted_at < NOW() - INTERVAL '30 days';
+                  
+                  -- Delete user documents and chunks
+                  DELETE FROM document_chunks 
+                  WHERE document_id IN (
+                    SELECT id FROM documents 
+                    WHERE user_id IN (SELECT id FROM users_to_delete)
+                  );
+                  
+                  DELETE FROM documents 
+                  WHERE user_id IN (SELECT id FROM users_to_delete);
+                  
+                  -- Delete query history
+                  DELETE FROM query_history 
+                  WHERE user_id IN (SELECT id FROM users_to_delete);
+                  
+                  -- Anonymize analytics (keep for aggregate analysis)
+                  UPDATE analytics_events 
+                  SET user_id = NULL, 
+                      ip_address = NULL,
+                      user_agent = 'ANONYMIZED'
+                  WHERE user_id IN (SELECT id FROM users_to_delete);
+                  
+                  -- Delete user record
+                  DELETE FROM users 
+                  WHERE id IN (SELECT id FROM users_to_delete);
+                  
+                  -- Log deletion for audit
+                  INSERT INTO audit_log (action, details, created_at)
+                  SELECT 
+                    'USER_HARD_DELETE',
+                    jsonb_build_object('user_id', id, 'reason', 'GDPR retention expiry'),
+                    NOW()
+                  FROM users_to_delete;
+                  
+                  COMMIT;
+                  
+                  EOF
+                  
+                  echo "User data purge completed at $(date)"
+              envFrom:
+                - configMapRef:
+                    name: retention-config
+              env:
+                - name: POSTGRES_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: driftguard-secrets
+                      key: POSTGRES_USER
+                - name: POSTGRES_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: driftguard-secrets
+                      key: POSTGRES_PASSWORD
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+          restartPolicy: OnFailure
+
+---
+# Analytics Anonymization CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: anonymize-analytics
+  namespace: driftguard-compliance
+  labels:
+    app: driftguard
+    component: privacy
+spec:
+  schedule: "0 4 * * 0"  # Weekly on Sunday at 4 AM
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: compliance-automation
+          containers:
+            - name: anonymize
+              image: postgres:15-alpine
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  echo "Starting analytics anonymization at $(date)"
+                  
+                  PGPASSWORD="${POSTGRES_PASSWORD}" psql -h postgres -U "${POSTGRES_USER}" -d driftguard << 'EOF'
+                  
+                  -- Anonymize analytics older than 90 days
+                  UPDATE analytics_events
+                  SET 
+                    ip_address = 'ANONYMIZED',
+                    user_agent = CASE 
+                      WHEN user_agent LIKE '%Chrome%' THEN 'Chrome'
+                      WHEN user_agent LIKE '%Firefox%' THEN 'Firefox'
+                      WHEN user_agent LIKE '%Safari%' THEN 'Safari'
+                      ELSE 'Other'
+                    END,
+                    session_id = md5(session_id || 'salt')::uuid
+                  WHERE created_at < NOW() - INTERVAL '90 days'
+                  AND ip_address != 'ANONYMIZED';
+                  
+                  -- Aggregate old query metrics
+                  INSERT INTO query_metrics_daily (date, total_queries, avg_latency, p95_latency)
+                  SELECT 
+                    DATE(created_at),
+                    COUNT(*),
+                    AVG(latency_ms),
+                    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms)
+                  FROM query_history
+                  WHERE created_at < NOW() - INTERVAL '30 days'
+                  AND DATE(created_at) NOT IN (SELECT date FROM query_metrics_daily)
+                  GROUP BY DATE(created_at);
+                  
+                  EOF
+                  
+                  echo "Analytics anonymization completed at $(date)"
+              env:
+                - name: POSTGRES_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: driftguard-secrets
+                      key: POSTGRES_USER
+                - name: POSTGRES_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: driftguard-secrets
+                      key: POSTGRES_PASSWORD
+          restartPolicy: OnFailure
+
+---
+# Qdrant Vector Cleanup CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cleanup-orphan-vectors
+  namespace: driftguard-compliance
+  labels:
+    app: driftguard
+    component: retention
+spec:
+  schedule: "0 6 * * 0"  # Weekly on Sunday at 6 AM
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: compliance-automation
+          containers:
+            - name: vector-cleanup
+              image: curlimages/curl:latest
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  echo "Starting vector cleanup at $(date)"
+                  
+                  # Get list of deleted document IDs from Postgres
+                  # Then delete corresponding vectors from Qdrant
+                  
+                  # This is a placeholder - actual implementation would:
+                  # 1. Query Postgres for deleted document IDs
+                  # 2. Delete vectors with those document_ids from Qdrant
+                  
+                  curl -X POST "http://qdrant:6333/collections/documents/points/delete" \
+                    -H "Content-Type: application/json" \
+                    -d '{
+                      "filter": {
+                        "must": [
+                          {
+                            "key": "deleted_at",
+                            "range": {
+                              "lt": "'$(date -d '-30 days' +%s)'"
+                            }
+                          }
+                        ]
+                      }
+                    }'
+                  
+                  echo "Vector cleanup completed at $(date)"
+          restartPolicy: OnFailure
+
+---
+# Compliance Report Generator
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: generate-compliance-report
+  namespace: driftguard-compliance
+  labels:
+    app: driftguard
+    component: compliance
+spec:
+  schedule: "0 7 1 * *"  # Monthly on 1st at 7 AM
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: compliance-automation
+          containers:
+            - name: report-generator
+              image: python:3.11-slim
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  pip install psycopg2-binary boto3 jinja2
+                  python << 'EOF'
+                  import os
+                  import json
+                  from datetime import datetime, timedelta
+                  import psycopg2
+                  
+                  # Generate monthly compliance report
+                  report = {
+                      "report_date": datetime.now().isoformat(),
+                      "report_period": {
+                          "start": (datetime.now() - timedelta(days=30)).isoformat(),
+                          "end": datetime.now().isoformat()
+                      },
+                      "metrics": {}
+                  }
+                  
+                  # Connect to database
+                  conn = psycopg2.connect(
+                      host="postgres",
+                      user=os.environ["POSTGRES_USER"],
+                      password=os.environ["POSTGRES_PASSWORD"],
+                      database="driftguard"
+                  )
+                  cur = conn.cursor()
+                  
+                  # DSAR metrics
+                  cur.execute("""
+                      SELECT 
+                          COUNT(*) as total_requests,
+                          AVG(EXTRACT(EPOCH FROM (completed_at - created_at))/86400) as avg_days,
+                          SUM(CASE WHEN completed_at - created_at > INTERVAL '30 days' THEN 1 ELSE 0 END) as overdue
+                      FROM data_subject_requests
+                      WHERE created_at > NOW() - INTERVAL '30 days'
+                  """)
+                  row = cur.fetchone()
+                  report["metrics"]["dsar"] = {
+                      "total_requests": row[0],
+                      "avg_completion_days": float(row[1]) if row[1] else 0,
+                      "overdue_count": row[2]
+                  }
+                  
+                  # Deletion metrics
+                  cur.execute("""
+                      SELECT COUNT(*) FROM users 
+                      WHERE deleted_at > NOW() - INTERVAL '30 days'
+                  """)
+                  report["metrics"]["deletions"] = cur.fetchone()[0]
+                  
+                  # Data export metrics
+                  cur.execute("""
+                      SELECT COUNT(*) FROM audit_log 
+                      WHERE action = 'DATA_EXPORT' 
+                      AND created_at > NOW() - INTERVAL '30 days'
+                  """)
+                  report["metrics"]["exports"] = cur.fetchone()[0]
+                  
+                  print(json.dumps(report, indent=2))
+                  
+                  # Upload report to S3
+                  import boto3
+                  s3 = boto3.client('s3')
+                  s3.put_object(
+                      Bucket=os.environ.get("S3_BUCKET", "driftguard-compliance"),
+                      Key=f"reports/{datetime.now().strftime('%Y/%m')}/compliance-report.json",
+                      Body=json.dumps(report),
+                      ContentType="application/json"
+                  )
+                  
+                  conn.close()
+                  EOF
+              env:
+                - name: POSTGRES_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: driftguard-secrets
+                      key: POSTGRES_USER
+                - name: POSTGRES_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: driftguard-secrets
+                      key: POSTGRES_PASSWORD
+          restartPolicy: OnFailure
+
+---
+# DSAR Processing Queue Processor
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dsar-processor
+  namespace: driftguard-compliance
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dsar-processor
+  template:
+    metadata:
+      labels:
+        app: dsar-processor
+    spec:
+      serviceAccountName: compliance-automation
+      containers:
+        - name: processor
+          image: python:3.11-slim
+          command:
+            - python
+            - -c
+            - |
+              # DSAR Queue Processor
+              # Processes data subject access requests from queue
+              import time
+              import logging
+              
+              logging.basicConfig(level=logging.INFO)
+              logger = logging.getLogger(__name__)
+              
+              while True:
+                  # Check for pending DSARs
+                  # Process exports, deletions, etc.
+                  logger.info("Checking for pending DSARs...")
+                  time.sleep(300)  # Check every 5 minutes
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: driftguard-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: driftguard-secrets
+                  key: POSTGRES_PASSWORD
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi

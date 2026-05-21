@@ -1,0 +1,14 @@
+# Universal RAG dependencies for 90%+ confidence
+langchain>=0.1.0
+ragas>=0.1.0
+openai>=1.0.0
+qdrant-client>=1.6.0
+pydantic>=1.10.0
+fastapi>=0.100.0
+uvicorn>=0.23.0
+httpx>=0.24.0
+# For LLMs (if using local or API):
+llama-index>=0.10.0
+# For embedding models
+sentence-transformers>=2.2.2
+# For qwen/llama3 support (if using vLLM or OpenRouter, add their SDKs)

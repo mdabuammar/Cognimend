@@ -1,0 +1,157 @@
+# =============================================================================
+# Project Root .gitignore
+# =============================================================================
+
+# =============================================================================
+# Environment Files - CRITICAL SECURITY
+# =============================================================================
+.env
+.env.local
+.env.*
+!.env.example
+.env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.production
+*.env
+
+# API Keys and Secrets
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+.secrets/
+api-keys.json
+credentials.json
+
+# =============================================================================
+# Dependencies
+# =============================================================================
+node_modules/
+frontend/node_modules/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+venv/
+.venv/
+env/
+ENV/
+
+# =============================================================================
+# IDE and Editors
+# =============================================================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+# =============================================================================
+# OS Files
+# =============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# =============================================================================
+# Logs
+# =============================================================================
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# =============================================================================
+# Testing
+# =============================================================================
+coverage/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+*.cover
+
+# =============================================================================
+# Build Outputs
+# =============================================================================
+dist/
+build/
+frontend/dist/
+frontend/build/
+*.local
+.cache/
+.parcel-cache/
+.next/
+out/
+.nuxt/
+
+# =============================================================================
+# Docker
+# =============================================================================
+docker-compose.override.yml
+.docker/
+
+# =============================================================================
+# Database
+# =============================================================================
+*.db
+*.sqlite
+*.sqlite3
+*.dump
+*.sql.gz
+data/uploads/*
+!data/uploads/.gitkeep
+uploads/
+storage/
+local_storage/
+
+# =============================================================================
+# Misc
+# =============================================================================
+*.bak
+*.tmp
+*.temp
+tmp/
+temp/
+.history/
+
+# Local/private project files
+API Code/api key.txt
+login_data.json
+test_documents/

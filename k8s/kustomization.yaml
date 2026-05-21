@@ -1,0 +1,82 @@
+# =============================================================================
+# Kustomization File for Cognimend Kubernetes Deployment
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: cognimend-k8s
+
+# Namespace for all resources
+namespace: cognimend
+
+# Labels applied to all resources
+commonLabels:
+  app.kubernetes.io/part-of: cognimend
+  app.kubernetes.io/managed-by: kustomize
+
+# Resources to deploy (in order)
+resources:
+  # Namespace and RBAC
+  - namespace.yaml
+  - ingress.yaml  # Contains ServiceAccount, Role, RoleBinding
+  
+  # Configuration
+  - configmap.yaml
+  - secrets.yaml
+  
+  # Persistent Storage
+  - postgres-pv.yaml
+  - qdrant-pv.yaml
+  
+  # Database Layer
+  - postgres-deployment.yaml
+  - qdrant-deployment.yaml
+  - redis-deployment.yaml
+  
+  # Application Layer
+  - upload-deployment.yaml
+  - query-deployment.yaml
+  - telemetry-deployment.yaml
+  - drift-detector-deployment.yaml
+  - controller-deployment.yaml
+  - evaluation-deployment.yaml
+  
+  # Autoscaling
+  - query-hpa.yaml
+  - upload-hpa.yaml
+  
+  # Network Security
+  - network-policies.yaml
+  
+  # Availability
+  - pod-disruption-budgets.yaml
+
+# Image customization (override in overlays)
+images:
+  - name: cognimend/upload-service
+    newTag: latest
+  - name: cognimend/query-service
+    newTag: latest
+  - name: cognimend/telemetry-service
+    newTag: latest
+  - name: cognimend/drift-detector-service
+    newTag: latest
+  - name: cognimend/controller-service
+    newTag: latest
+  - name: cognimend/evaluation-service
+    newTag: latest
+
+# Config map generator (alternative to static configmap.yaml)
+# configMapGenerator:
+#   - name: cognimend-config
+#     behavior: merge
+#     envs:
+#       - config.env
+
+# Secret generator (alternative to static secrets.yaml)
+# secretGenerator:
+#   - name: cognimend-secrets
+#     type: Opaque
+#     envs:
+#       - secrets.env

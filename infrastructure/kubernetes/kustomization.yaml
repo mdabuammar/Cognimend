@@ -1,0 +1,77 @@
+# =============================================================================
+# DriftGuard Kustomize Configuration
+# =============================================================================
+# Base configuration for all environments
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: driftguard
+
+resources:
+  # Core
+  - namespace.yaml
+  - api-deployment.yaml
+  - frontend-deployment.yaml
+  - configmaps-secrets.yaml
+  
+  # Networking & Ingress
+  - ingress.yaml
+  - network-policies.yaml
+  
+  # Autoscaling
+  - hpa.yaml
+  - vpa.yaml
+  
+  # Database & Storage
+  - redis-cluster.yaml
+  - qdrant-cluster.yaml
+  - postgres-ha.yaml
+  
+  # Monitoring & Observability
+  - prometheus.yaml
+  - prometheus-rules.yaml
+  - grafana.yaml
+  - loki-stack.yaml
+  
+  # Security
+  - rbac.yaml
+  - external-secrets.yaml
+  - security-hardening.yaml
+  
+  # Backup & DR
+  - database-backup.yaml
+  
+  # Compliance
+  - data-retention.yaml
+  
+  # Deployment Strategies
+  - blue-green-deployment.yaml
+  
+  # CDN & Static Assets
+  - cdn-config.yaml
+  
+  # Load Testing (staging only)
+  # - load-testing.yaml
+
+commonLabels:
+  app.kubernetes.io/name: driftguard
+  app.kubernetes.io/managed-by: kustomize
+  app.kubernetes.io/part-of: driftguard-platform
+
+commonAnnotations:
+  app.kubernetes.io/version: "1.0.0"
+
+images:
+  - name: ghcr.io/driftguard/controller
+    newTag: latest
+  - name: ghcr.io/driftguard/query
+    newTag: latest
+  - name: ghcr.io/driftguard/upload
+    newTag: latest
+  - name: ghcr.io/driftguard/evaluation
+    newTag: latest
+  - name: ghcr.io/driftguard/drift-detector
+    newTag: latest
+  - name: ghcr.io/driftguard/telemetry
+    newTag: latest

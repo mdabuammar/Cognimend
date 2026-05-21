@@ -1,0 +1,279 @@
+# =============================================================================
+# DriftGuard Prometheus Alerting Rules
+# =============================================================================
+# Production-ready alerting for deployment monitoring and auto-rollback.
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: driftguard-alerts
+  namespace: monitoring
+  labels:
+    app: driftguard
+    prometheus: main
+spec:
+  groups:
+    # =========================================================================
+    # Deployment Health Alerts
+    # =========================================================================
+    - name: driftguard.deployment
+      interval: 30s
+      rules:
+        # High Error Rate - Warning
+        - alert: DriftGuardHighErrorRate
+          expr: |
+            sum(rate(http_requests_total{job=~"driftguard.*",status=~"5.."}[5m])) 
+            / sum(rate(http_requests_total{job=~"driftguard.*"}[5m])) > 0.05
+          for: 2m
+          labels:
+            severity: warning
+            service: driftguard
+          annotations:
+            summary: "High error rate detected in DriftGuard"
+            description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+            runbook_url: "https://docs.driftguard.io/runbooks/high-error-rate"
+
+        # Critical Error Rate - Trigger Rollback
+        - alert: DriftGuardCriticalErrorRate
+          expr: |
+            sum(rate(http_requests_total{job=~"driftguard.*",status=~"5.."}[5m])) 
+            / sum(rate(http_requests_total{job=~"driftguard.*"}[5m])) > 0.10
+          for: 1m
+          labels:
+            severity: critical
+            service: driftguard
+            action: rollback
+          annotations:
+            summary: "CRITICAL: Error rate exceeded 10% - Consider rollback"
+            description: "Error rate is {{ $value | humanizePercentage }}. Automatic rollback may be triggered."
+            runbook_url: "https://docs.driftguard.io/runbooks/rollback"
+
+        # Slow Response Time
+        - alert: DriftGuardSlowResponseTime
+          expr: |
+            histogram_quantile(0.95, 
+              sum(rate(http_request_duration_seconds_bucket{job=~"driftguard.*"}[5m])) 
+              by (le, service)
+            ) > 2
+          for: 5m
+          labels:
+            severity: warning
+            service: driftguard
+          annotations:
+            summary: "Slow response time in {{ $labels.service }}"
+            description: "95th percentile response time is {{ $value }}s (threshold: 2s)"
+
+        # Very Slow Response - Critical
+        - alert: DriftGuardVerySlowResponseTime
+          expr: |
+            histogram_quantile(0.95, 
+              sum(rate(http_request_duration_seconds_bucket{job=~"driftguard.*"}[5m])) 
+              by (le, service)
+            ) > 5
+          for: 3m
+          labels:
+            severity: critical
+            service: driftguard
+          annotations:
+            summary: "CRITICAL: Very slow response in {{ $labels.service }}"
+            description: "95th percentile response time is {{ $value }}s"
+
+    # =========================================================================
+    # Pod Health Alerts
+    # =========================================================================
+    - name: driftguard.pods
+      interval: 30s
+      rules:
+        # Pod Restart Loop
+        - alert: DriftGuardPodRestartLoop
+          expr: |
+            increase(kube_pod_container_status_restarts_total{
+              namespace=~"driftguard.*"
+            }[1h]) > 3
+          for: 5m
+          labels:
+            severity: warning
+            service: driftguard
+          annotations:
+            summary: "Pod {{ $labels.pod }} is restarting frequently"
+            description: "Pod has restarted {{ $value }} times in the last hour"
+            runbook_url: "https://docs.driftguard.io/runbooks/pod-restart"
+
+        # Pod Not Ready
+        - alert: DriftGuardPodNotReady
+          expr: |
+            kube_pod_status_ready{
+              namespace=~"driftguard.*",
+              condition="true"
+            } == 0
+          for: 5m
+          labels:
+            severity: warning
+            service: driftguard
+          annotations:
+            summary: "Pod {{ $labels.pod }} is not ready"
+            description: "Pod has been in not-ready state for 5 minutes"
+
+        # Deployment Replicas Mismatch
+        - alert: DriftGuardDeploymentReplicasMismatch
+          expr: |
+            kube_deployment_status_replicas_available{namespace=~"driftguard.*"} 
+            != kube_deployment_spec_replicas{namespace=~"driftguard.*"}
+          for: 10m
+          labels:
+            severity: warning
+            service: driftguard
+          annotations:
+            summary: "Deployment {{ $labels.deployment }} has replica mismatch"
+            description: "Available: {{ $value }}, Desired: {{ $labels.spec_replicas }}"
+
+        # No Pods Running
+        - alert: DriftGuardNoPodsRunning
+          expr: |
+            kube_deployment_status_replicas_available{namespace=~"driftguard.*"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            service: driftguard
+          annotations:
+            summary: "CRITICAL: No pods running for {{ $labels.deployment }}"
+            description: "Service is completely down"
+            runbook_url: "https://docs.driftguard.io/runbooks/service-down"
+
+    # =========================================================================
+    # Resource Alerts
+    # =========================================================================
+    - name: driftguard.resources
+      interval: 60s
+      rules:
+        # High CPU Usage
+        - alert: DriftGuardHighCPU
+          expr: |
+            sum(rate(container_cpu_usage_seconds_total{
+              namespace=~"driftguard.*",
+              container!=""
+            }[5m])) by (pod, container)
+            / sum(kube_pod_container_resource_limits{
+              namespace=~"driftguard.*",
+              resource="cpu"
+            }) by (pod, container) > 0.85
+          for: 10m
+          labels:
+            severity: warning
+            service: driftguard
+          annotations:
+            summary: "High CPU usage in {{ $labels.pod }}"
+            description: "CPU usage is {{ $value | humanizePercentage }} of limit"
+
+        # High Memory Usage
+        - alert: DriftGuardHighMemory
+          expr: |
+            sum(container_memory_working_set_bytes{
+              namespace=~"driftguard.*",
+              container!=""
+            }) by (pod, container)
+            / sum(kube_pod_container_resource_limits{
+              namespace=~"driftguard.*",
+              resource="memory"
+            }) by (pod, container) > 0.85
+          for: 10m
+          labels:
+            severity: warning
+            service: driftguard
+          annotations:
+            summary: "High memory usage in {{ $labels.pod }}"
+            description: "Memory usage is {{ $value | humanizePercentage }} of limit"
+
+        # OOMKilled
+        - alert: DriftGuardOOMKilled
+          expr: |
+            kube_pod_container_status_last_terminated_reason{
+              namespace=~"driftguard.*",
+              reason="OOMKilled"
+            } == 1
+          for: 0m
+          labels:
+            severity: critical
+            service: driftguard
+          annotations:
+            summary: "Container {{ $labels.container }} was OOMKilled"
+            description: "Container in pod {{ $labels.pod }} was killed due to OOM"
+
+    # =========================================================================
+    # Infrastructure Alerts
+    # =========================================================================
+    - name: driftguard.infrastructure
+      interval: 60s
+      rules:
+        # Database Connection Issues
+        - alert: DriftGuardDatabaseConnectionHigh
+          expr: |
+            pg_stat_activity_count{datname="driftguard"} 
+            / pg_settings_max_connections > 0.8
+          for: 5m
+          labels:
+            severity: warning
+            service: driftguard
+          annotations:
+            summary: "Database connections near limit"
+            description: "Using {{ $value | humanizePercentage }} of max connections"
+
+        # Redis Connection Issues
+        - alert: DriftGuardRedisDown
+          expr: redis_up{job="redis"} == 0
+          for: 1m
+          labels:
+            severity: critical
+            service: driftguard
+          annotations:
+            summary: "Redis is down"
+            description: "Redis cache is not responding"
+
+        # Qdrant Issues
+        - alert: DriftGuardQdrantDown
+          expr: up{job="qdrant"} == 0
+          for: 1m
+          labels:
+            severity: critical
+            service: driftguard
+          annotations:
+            summary: "Qdrant is down"
+            description: "Vector database is not responding"
+
+    # =========================================================================
+    # SLO Alerts
+    # =========================================================================
+    - name: driftguard.slo
+      interval: 60s
+      rules:
+        # Availability SLO (99.9%)
+        - alert: DriftGuardSLOAvailabilityBreach
+          expr: |
+            (
+              sum(rate(http_requests_total{job=~"driftguard.*",status!~"5.."}[1h]))
+              / sum(rate(http_requests_total{job=~"driftguard.*"}[1h]))
+            ) < 0.999
+          for: 5m
+          labels:
+            severity: warning
+            service: driftguard
+            slo: availability
+          annotations:
+            summary: "SLO Breach: Availability below 99.9%"
+            description: "Current availability: {{ $value | humanizePercentage }}"
+
+        # Latency SLO (P95 < 500ms)
+        - alert: DriftGuardSLOLatencyBreach
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(http_request_duration_seconds_bucket{job=~"driftguard.*"}[1h]))
+              by (le)
+            ) > 0.5
+          for: 10m
+          labels:
+            severity: warning
+            service: driftguard
+            slo: latency
+          annotations:
+            summary: "SLO Breach: P95 latency above 500ms"
+            description: "Current P95 latency: {{ $value }}s"

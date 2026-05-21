@@ -1,0 +1,181 @@
+# =============================================================================
+# Query Service Deployment and Service
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: query
+  namespace: cognimend
+  labels:
+    app.kubernetes.io/name: query
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: cognimend
+    app.kubernetes.io/version: "2.0.0"
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: "/metrics"
+spec:
+  replicas: 3  # Higher replicas for expected traffic
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 2
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: query
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: query
+        app.kubernetes.io/component: api
+        app.kubernetes.io/part-of: cognimend
+        app.kubernetes.io/version: "2.0.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: cognimend-service
+      securityContext:
+        fsGroup: 1000
+        runAsUser: 1000
+        runAsNonRoot: true
+      
+      # Pod anti-affinity for high availability
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: query
+              topologyKey: kubernetes.io/hostname
+      
+      # Topology spread for even distribution
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: query
+      
+      containers:
+        - name: query
+          image: cognimend/query-service:latest
+          imagePullPolicy: Always
+          
+          ports:
+            - name: http
+              containerPort: 8002
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          
+          envFrom:
+            - configMapRef:
+                name: cognimend-config
+          
+          env:
+            - name: SERVICE_NAME
+              value: "query"
+            - name: SERVICE_PORT
+              value: "8002"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cognimend-secrets
+                  key: POSTGRES_PASSWORD
+            - name: OPENROUTER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: cognimend-secrets
+                  key: OPENROUTER_API_KEY
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: cognimend-secrets
+                  key: API_KEY
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: cognimend-secrets
+                  key: JWT_SECRET
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cognimend-secrets
+                  key: REDIS_PASSWORD
+                  optional: true
+          
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+          
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      
+      volumes:
+        - name: tmp
+          emptyDir: {}
+
+---
+# =============================================================================
+# Query Service
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: query
+  namespace: cognimend
+  labels:
+    app.kubernetes.io/name: query
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: cognimend
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8002
+      targetPort: 8002
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: query
+    app.kubernetes.io/component: api

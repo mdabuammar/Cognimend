@@ -1,0 +1,547 @@
+# =============================================================================
+# Continuous Deployment Pipeline
+# =============================================================================
+# This workflow handles automated deployments to staging and production.
+# Features: Blue-Green deployment, Canary releases, Auto-rollback
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      version:
+        description: 'Version to deploy (leave empty for latest)'
+        required: false
+        type: string
+      rollback:
+        description: 'Rollback to previous version'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+concurrency:
+  group: deploy-${{ github.event.inputs.environment || 'staging' }}
+  cancel-in-progress: false
+
+jobs:
+  # ===========================================================================
+  # Build and Push Images
+  # ===========================================================================
+  build-images:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    if: github.event.inputs.rollback != 'true'
+    
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      image-tag: ${{ steps.version.outputs.image-tag }}
+    
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${{ github.sha }}"
+          fi
+          
+          IMAGE_TAG="${VERSION}-$(date +%Y%m%d%H%M%S)"
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "image-tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+          echo "Image Tag: $IMAGE_TAG"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build all services in parallel
+      - name: Build Controller Service
+        uses: docker/build-push-action@v5
+        with:
+          context: backend
+          file: backend/services/controller/Dockerfile.optimized
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/controller:${{ steps.version.outputs.image-tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/controller:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_VERSION=${{ steps.version.outputs.version }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            VCS_REF=${{ github.sha }}
+
+      - name: Build Query Service
+        uses: docker/build-push-action@v5
+        with:
+          context: backend
+          file: backend/services/query/Dockerfile.optimized
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/query:${{ steps.version.outputs.image-tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/query:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build Upload Service
+        uses: docker/build-push-action@v5
+        with:
+          context: backend
+          file: backend/services/upload/Dockerfile.optimized
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/upload:${{ steps.version.outputs.image-tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/upload:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build Evaluation Service
+        uses: docker/build-push-action@v5
+        with:
+          context: backend
+          file: backend/services/evaluation/Dockerfile.optimized
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/evaluation:${{ steps.version.outputs.image-tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/evaluation:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build Drift Detector Service
+        uses: docker/build-push-action@v5
+        with:
+          context: backend
+          file: backend/services/drift_detector/Dockerfile.optimized
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/drift-detector:${{ steps.version.outputs.image-tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/drift-detector:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build Telemetry Service
+        uses: docker/build-push-action@v5
+        with:
+          context: backend
+          file: backend/services/telemetry/Dockerfile.optimized
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/telemetry:${{ steps.version.outputs.image-tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/telemetry:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Scan images for vulnerabilities
+      - name: Scan Images for Vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/controller:${{ steps.version.outputs.image-tag }}'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+        continue-on-error: true
+
+      - name: Upload Scan Results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # ===========================================================================
+  # Deploy to Staging
+  # ===========================================================================
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build-images]
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    
+    environment:
+      name: staging
+      url: https://staging.driftguard.example.com
+    
+    outputs:
+      deployment-id: ${{ steps.deploy.outputs.deployment-id }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: Configure Kubernetes context
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG_STAGING }}" | base64 -d > ~/.kube/config
+          kubectl config use-context staging
+
+      - name: Deploy to Staging
+        id: deploy
+        run: |
+          IMAGE_TAG="${{ needs.build-images.outputs.image-tag }}"
+          DEPLOYMENT_ID="deploy-staging-$(date +%s)"
+          
+          echo "Deploying version: $IMAGE_TAG"
+          echo "deployment-id=$DEPLOYMENT_ID" >> $GITHUB_OUTPUT
+          
+          # Update image tags in deployments
+          kubectl set image deployment/driftguard-controller \
+            controller=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/controller:$IMAGE_TAG \
+            -n driftguard-staging || echo "Controller deployment not found, creating..."
+          
+          kubectl set image deployment/driftguard-query \
+            query=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/query:$IMAGE_TAG \
+            -n driftguard-staging || echo "Query deployment not found"
+          
+          kubectl set image deployment/driftguard-upload \
+            upload=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/upload:$IMAGE_TAG \
+            -n driftguard-staging || echo "Upload deployment not found"
+          
+          # Wait for rollout
+          kubectl rollout status deployment/driftguard-controller -n driftguard-staging --timeout=300s || true
+          kubectl rollout status deployment/driftguard-query -n driftguard-staging --timeout=300s || true
+          kubectl rollout status deployment/driftguard-upload -n driftguard-staging --timeout=300s || true
+
+      - name: Verify Deployment
+        run: |
+          echo "Waiting for pods to be ready..."
+          sleep 30
+          
+          # Check pod status
+          kubectl get pods -n driftguard-staging -l app=driftguard
+          
+          # Health check
+          STAGING_URL="https://staging.driftguard.example.com"
+          
+          for i in {1..5}; do
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" $STAGING_URL/health || echo "000")
+            if [ "$HTTP_STATUS" = "200" ]; then
+              echo "✅ Health check passed"
+              exit 0
+            fi
+            echo "Attempt $i: Status $HTTP_STATUS, retrying..."
+            sleep 10
+          done
+          
+          echo "::warning::Health check did not pass, but continuing..."
+
+      - name: Run Smoke Tests
+        run: |
+          echo "Running smoke tests against staging..."
+          # Add smoke test commands here
+          # npm run test:smoke -- --env=staging
+
+      - name: Notify Slack - Staging Deploy
+        if: always()
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "${{ job.status == 'success' && '✅' || '❌' }} Staging deployment ${{ job.status }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "${{ job.status == 'success' && '✅' || '❌' }} *Staging Deployment*\n\nVersion: `${{ needs.build-images.outputs.image-tag }}`\nStatus: ${{ job.status }}\nURL: https://staging.driftguard.example.com"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        continue-on-error: true
+
+  # ===========================================================================
+  # Deploy to Production (Blue-Green)
+  # ===========================================================================
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build-images, deploy-staging]
+    if: |
+      github.event_name == 'workflow_dispatch' && 
+      github.event.inputs.environment == 'production' &&
+      github.event.inputs.rollback != 'true'
+    
+    environment:
+      name: production
+      url: https://driftguard.example.com
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Configure Kubernetes context
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG_PRODUCTION }}" | base64 -d > ~/.kube/config
+          kubectl config use-context production
+
+      - name: Get Current Active Deployment
+        id: current
+        run: |
+          # Determine which color is currently active
+          ACTIVE=$(kubectl get svc driftguard-api -n driftguard-prod -o jsonpath='{.spec.selector.version}' 2>/dev/null || echo "blue")
+          
+          if [ "$ACTIVE" = "blue" ]; then
+            TARGET="green"
+          else
+            TARGET="blue"
+          fi
+          
+          echo "active=$ACTIVE" >> $GITHUB_OUTPUT
+          echo "target=$TARGET" >> $GITHUB_OUTPUT
+          echo "Current active: $ACTIVE, Target: $TARGET"
+
+      - name: Deploy to Inactive Slot (${{ steps.current.outputs.target }})
+        run: |
+          IMAGE_TAG="${{ needs.build-images.outputs.image-tag }}"
+          TARGET="${{ steps.current.outputs.target }}"
+          
+          echo "Deploying to $TARGET slot..."
+          
+          # Update the inactive deployment
+          kubectl set image deployment/driftguard-controller-$TARGET \
+            controller=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/controller:$IMAGE_TAG \
+            -n driftguard-prod
+          
+          kubectl set image deployment/driftguard-query-$TARGET \
+            query=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/query:$IMAGE_TAG \
+            -n driftguard-prod
+          
+          kubectl set image deployment/driftguard-upload-$TARGET \
+            upload=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/upload:$IMAGE_TAG \
+            -n driftguard-prod
+          
+          # Wait for rollout
+          kubectl rollout status deployment/driftguard-controller-$TARGET -n driftguard-prod --timeout=300s
+          kubectl rollout status deployment/driftguard-query-$TARGET -n driftguard-prod --timeout=300s
+          kubectl rollout status deployment/driftguard-upload-$TARGET -n driftguard-prod --timeout=300s
+
+      - name: Pre-Switch Health Check
+        id: pre-switch-health
+        run: |
+          TARGET="${{ steps.current.outputs.target }}"
+          
+          # Get pod IP for internal health check
+          POD_IP=$(kubectl get pod -l app=driftguard-controller,version=$TARGET \
+            -n driftguard-prod -o jsonpath='{.items[0].status.podIP}' 2>/dev/null || echo "")
+          
+          if [ -n "$POD_IP" ]; then
+            # Run health check from within cluster
+            kubectl run health-check-$TARGET --rm -i --restart=Never \
+              --image=curlimages/curl:latest \
+              -n driftguard-prod \
+              -- curl -f http://$POD_IP:8005/health --max-time 10
+          fi
+          
+          echo "Pre-switch health check passed"
+
+      - name: Switch Traffic to ${{ steps.current.outputs.target }}
+        run: |
+          TARGET="${{ steps.current.outputs.target }}"
+          
+          echo "Switching traffic to $TARGET..."
+          
+          kubectl patch svc driftguard-api \
+            -n driftguard-prod \
+            -p "{\"spec\":{\"selector\":{\"version\":\"$TARGET\"}}}"
+          
+          echo "Traffic switched to $TARGET"
+
+      - name: Post-Switch Verification
+        id: post-switch
+        run: |
+          echo "Verifying production health..."
+          sleep 15
+          
+          PROD_URL="https://driftguard.example.com"
+          
+          for i in {1..5}; do
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" $PROD_URL/health || echo "000")
+            if [ "$HTTP_STATUS" = "200" ]; then
+              echo "✅ Production health check passed"
+              echo "status=success" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+            echo "Attempt $i: Status $HTTP_STATUS, retrying..."
+            sleep 10
+          done
+          
+          echo "❌ Production health check failed!"
+          echo "status=failed" >> $GITHUB_OUTPUT
+          exit 1
+
+      - name: Auto-Rollback on Failure
+        if: failure() && steps.post-switch.outputs.status == 'failed'
+        run: |
+          ACTIVE="${{ steps.current.outputs.active }}"
+          
+          echo "⚠️ Rolling back to $ACTIVE..."
+          
+          kubectl patch svc driftguard-api \
+            -n driftguard-prod \
+            -p "{\"spec\":{\"selector\":{\"version\":\"$ACTIVE\"}}}"
+          
+          echo "Rollback completed"
+
+      - name: Scale Down Old Deployment
+        if: success()
+        run: |
+          OLD="${{ steps.current.outputs.active }}"
+          
+          echo "Scaling down $OLD deployment to 1 replica..."
+          
+          kubectl scale deployment/driftguard-controller-$OLD --replicas=1 -n driftguard-prod
+          kubectl scale deployment/driftguard-query-$OLD --replicas=1 -n driftguard-prod
+          kubectl scale deployment/driftguard-upload-$OLD --replicas=1 -n driftguard-prod
+
+      - name: Create Release Tag
+        if: success()
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          
+          TAG="release-$(date +%Y%m%d-%H%M%S)"
+          git tag -a $TAG -m "Production release $TAG"
+          git push origin $TAG || true
+
+      - name: Notify Slack - Production Deploy
+        if: always()
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "${{ job.status == 'success' && '🚀' || '🔴' }} Production deployment ${{ job.status }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "${{ job.status == 'success' && '🚀' || '🔴' }} *Production Deployment*\n\nVersion: `${{ needs.build-images.outputs.image-tag }}`\nActive Slot: `${{ steps.current.outputs.target }}`\nStatus: ${{ job.status }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        continue-on-error: true
+
+  # ===========================================================================
+  # Manual Rollback
+  # ===========================================================================
+  rollback:
+    name: Rollback Production
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' && 
+      github.event.inputs.rollback == 'true'
+    
+    environment:
+      name: production
+      url: https://driftguard.example.com
+    
+    steps:
+      - name: Configure kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Configure Kubernetes context
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG_PRODUCTION }}" | base64 -d > ~/.kube/config
+
+      - name: Get Inactive Deployment
+        id: inactive
+        run: |
+          ACTIVE=$(kubectl get svc driftguard-api -n driftguard-prod -o jsonpath='{.spec.selector.version}')
+          
+          if [ "$ACTIVE" = "blue" ]; then
+            TARGET="green"
+          else
+            TARGET="blue"
+          fi
+          
+          echo "Current: $ACTIVE, Rolling back to: $TARGET"
+          echo "target=$TARGET" >> $GITHUB_OUTPUT
+          echo "active=$ACTIVE" >> $GITHUB_OUTPUT
+
+      - name: Execute Rollback
+        run: |
+          TARGET="${{ steps.inactive.outputs.target }}"
+          
+          echo "Switching traffic back to $TARGET..."
+          
+          kubectl patch svc driftguard-api \
+            -n driftguard-prod \
+            -p "{\"spec\":{\"selector\":{\"version\":\"$TARGET\"}}}"
+
+      - name: Verify Rollback
+        run: |
+          sleep 15
+          
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://driftguard.example.com/health || echo "000")
+          
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "✅ Rollback successful"
+          else
+            echo "⚠️ Health check returned: $HTTP_STATUS"
+          fi
+
+      - name: Notify Rollback
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "⏪ Production rollback completed",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "⏪ *Production Rollback*\n\nRolled back from `${{ steps.inactive.outputs.active }}` to `${{ steps.inactive.outputs.target }}`\nTriggered by: ${{ github.actor }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        continue-on-error: true

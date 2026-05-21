@@ -1,0 +1,21 @@
+# Staging replica count patch
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: driftguard-controller
+spec:
+  replicas: 2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: driftguard-query
+spec:
+  replicas: 2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: driftguard-upload
+spec:
+  replicas: 1

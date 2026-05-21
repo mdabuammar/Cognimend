@@ -1,0 +1,300 @@
+# =============================================================================
+# Nginx Security Hardening Configuration
+# =============================================================================
+# Production-ready nginx config with security best practices
+# =============================================================================
+
+# Main nginx configuration for Kubernetes Ingress
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-security-config
+  namespace: driftguard-prod
+data:
+  # Security headers
+  proxy-add-headers: "driftguard-prod/nginx-security-headers"
+  
+  # SSL/TLS configuration
+  ssl-protocols: "TLSv1.2 TLSv1.3"
+  ssl-ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384"
+  ssl-prefer-server-ciphers: "true"
+  ssl-session-cache: "shared:SSL:10m"
+  ssl-session-timeout: "1d"
+  ssl-session-tickets: "false"
+  
+  # HSTS
+  hsts: "true"
+  hsts-max-age: "31536000"
+  hsts-include-subdomains: "true"
+  hsts-preload: "true"
+  
+  # Security settings
+  server-tokens: "false"
+  hide-headers: "X-Powered-By,Server"
+  
+  # Rate limiting
+  limit-req-status-code: "429"
+  limit-conn-zone-variable: "$binary_remote_addr"
+  
+  # Request size limits
+  proxy-body-size: "50m"
+  client-body-buffer-size: "1m"
+  client-header-buffer-size: "1k"
+  large-client-header-buffers: "4 8k"
+  
+  # Timeouts
+  proxy-connect-timeout: "10"
+  proxy-read-timeout: "60"
+  proxy-send-timeout: "60"
+  
+  # Compression
+  use-gzip: "true"
+  gzip-level: "5"
+  gzip-min-length: "256"
+  gzip-types: "application/json application/javascript text/css text/plain text/xml application/xml"
+
+---
+# Security headers ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-security-headers
+  namespace: driftguard-prod
+data:
+  X-Content-Type-Options: "nosniff"
+  X-Frame-Options: "DENY"
+  X-XSS-Protection: "1; mode=block"
+  Referrer-Policy: "strict-origin-when-cross-origin"
+  Permissions-Policy: "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+  Content-Security-Policy: "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https://api.openrouter.ai wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+
+---
+# Rate limiting annotations for ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: driftguard-ingress-secure
+  namespace: driftguard-prod
+  annotations:
+    # Rate limiting
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/limit-connections: "50"
+    nginx.ingress.kubernetes.io/limit-rpm: "1000"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "5"
+    
+    # Security
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    
+    # CORS
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://app.driftguard.io"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-API-Key"
+    nginx.ingress.kubernetes.io/cors-max-age: "86400"
+    
+    # ModSecurity WAF (if installed)
+    nginx.ingress.kubernetes.io/enable-modsecurity: "true"
+    nginx.ingress.kubernetes.io/modsecurity-snippet: |
+      SecRuleEngine On
+      SecRule REQUEST_HEADERS:Content-Type "text/plain" "id:1,phase:1,t:lowercase,deny,status:406"
+    
+    # Custom error pages
+    nginx.ingress.kubernetes.io/custom-http-errors: "404,500,502,503,504"
+    nginx.ingress.kubernetes.io/default-backend: driftguard-error-pages
+    
+    # Proxy settings
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    
+    # Certificate management
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - api.driftguard.io
+        - app.driftguard.io
+      secretName: driftguard-tls
+  rules:
+    - host: api.driftguard.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: driftguard-controller
+                port:
+                  number: 8005
+    - host: app.driftguard.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: driftguard-frontend
+                port:
+                  number: 80
+
+---
+# Pod Security Standards
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: driftguard-prod
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
+
+---
+# SecurityContext defaults for all pods
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: security-context-defaults
+  namespace: driftguard-prod
+data:
+  pod-security-context.yaml: |
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      runAsGroup: 1000
+      fsGroup: 1000
+      seccompProfile:
+        type: RuntimeDefault
+    
+  container-security-context.yaml: |
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+          - ALL
+      privileged: false
+
+---
+# Secret encryption configuration
+apiVersion: apiserver.config.k8s.io/v1
+kind: EncryptionConfiguration
+metadata:
+  name: encryption-config
+resources:
+  - resources:
+      - secrets
+    providers:
+      - aescbc:
+          keys:
+            - name: key1
+              # In production, use KMS provider instead
+              secret: <base64-encoded-32-byte-key>
+      - identity: {}
+
+---
+# Falco security rules for runtime protection
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: falco-rules-driftguard
+  namespace: falco-system
+data:
+  driftguard_rules.yaml: |
+    - rule: DriftGuard Suspicious Process
+      desc: Detect suspicious processes in DriftGuard containers
+      condition: >
+        spawned_process and
+        container.name startswith "driftguard" and
+        proc.name in (shell_binaries, suspicious_binaries)
+      output: >
+        Suspicious process started in DriftGuard container
+        (user=%user.name command=%proc.cmdline container=%container.name)
+      priority: WARNING
+      tags: [driftguard, process]
+    
+    - rule: DriftGuard Sensitive File Access
+      desc: Detect access to sensitive files
+      condition: >
+        open_read and
+        container.name startswith "driftguard" and
+        (fd.name startswith /etc/shadow or
+         fd.name startswith /etc/passwd or
+         fd.name contains "id_rsa")
+      output: >
+        Sensitive file accessed in DriftGuard container
+        (user=%user.name file=%fd.name container=%container.name)
+      priority: CRITICAL
+      tags: [driftguard, file]
+    
+    - rule: DriftGuard Outbound Connection
+      desc: Detect unexpected outbound connections
+      condition: >
+        outbound and
+        container.name startswith "driftguard" and
+        not (fd.sip.name in (allowed_outbound_hosts))
+      output: >
+        Unexpected outbound connection from DriftGuard
+        (command=%proc.cmdline connection=%fd.name container=%container.name)
+      priority: WARNING
+      tags: [driftguard, network]
+    
+    - list: allowed_outbound_hosts
+      items: [api.openrouter.ai, qdrant, redis, postgres, jaeger]
+    
+    - list: shell_binaries
+      items: [bash, sh, zsh, csh, tcsh, ksh, fish]
+    
+    - list: suspicious_binaries
+      items: [nc, ncat, netcat, curl, wget, python, perl, ruby]
+
+---
+# OPA/Gatekeeper constraint for security policies
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sPSPPrivilegedContainer
+metadata:
+  name: psp-privileged-container
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    namespaces: ["driftguard-prod", "driftguard-staging"]
+  parameters:
+    exemptImages: []
+
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sContainerLimits
+metadata:
+  name: container-must-have-limits
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    namespaces: ["driftguard-prod"]
+  parameters:
+    cpu: "2000m"
+    memory: "4Gi"
+
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequiredLabels
+metadata:
+  name: require-app-label
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    namespaces: ["driftguard-prod"]
+  parameters:
+    labels:
+      - key: app
+      - key: version

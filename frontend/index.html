@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    
+    <!-- Security Headers (Temporarily relaxed for debugging) -->
+    <!-- <meta http-equiv="X-Frame-Options" content="DENY" /> -->
+    
+    <!-- Content Security Policy (Temporarily relaxed for debugging) -->
+    <!-- <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' http://localhost:* https://*; frame-ancestors 'none'; base-uri 'self'; form-action 'self';" /> -->
+    
+    <title>Cognimend — AI Knowledge Assistant</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="description" content="Turn your documents into a reliable AI knowledge assistant. Upload docs, ask questions, get source-based answers, and monitor quality with Cognimend." />
+    <meta name="author" content="Cognimend" />
+
+    <meta property="og:title" content="Cognimend — AI Knowledge Assistant" />
+    <meta property="og:description" content="Turn your documents into a reliable AI knowledge assistant with source-based answers and quality monitoring." />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="/og-image.png" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@cognimend" />
+    <meta name="twitter:image" content="/og-image.png" />
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

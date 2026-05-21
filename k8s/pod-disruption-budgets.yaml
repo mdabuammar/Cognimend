@@ -1,0 +1,87 @@
+# =============================================================================
+# Pod Disruption Budgets for High Availability
+# =============================================================================
+
+# Query Service PDB - Ensure high availability for user-facing queries
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: query-pdb
+  namespace: cognimend
+  labels:
+    app.kubernetes.io/name: query
+    app.kubernetes.io/component: api
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: query
+      app.kubernetes.io/component: api
+
+---
+# Upload Service PDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: upload-pdb
+  namespace: cognimend
+  labels:
+    app.kubernetes.io/name: upload
+    app.kubernetes.io/component: api
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: upload
+      app.kubernetes.io/component: api
+
+---
+# PostgreSQL PDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: postgresql-pdb
+  namespace: cognimend
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/component: database
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+      app.kubernetes.io/component: database
+
+---
+# Qdrant PDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: qdrant-pdb
+  namespace: cognimend
+  labels:
+    app.kubernetes.io/name: qdrant
+    app.kubernetes.io/component: database
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: qdrant
+      app.kubernetes.io/component: database
+
+---
+# Redis PDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: redis-pdb
+  namespace: cognimend
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: cache
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+      app.kubernetes.io/component: cache

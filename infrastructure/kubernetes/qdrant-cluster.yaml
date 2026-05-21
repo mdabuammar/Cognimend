@@ -1,0 +1,208 @@
+# Qdrant Vector Database Cluster Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qdrant-config
+  namespace: driftguard
+data:
+  config.yaml: |
+    cluster:
+      enabled: true
+      p2p:
+        port: 6335
+      consensus:
+        tick_period_ms: 100
+    
+    storage:
+      storage_path: /qdrant/storage
+      snapshots_path: /qdrant/snapshots
+      
+      performance:
+        max_search_threads: 0  # Auto-detect
+        max_optimization_threads: 4
+        
+      wal:
+        wal_capacity_mb: 256
+        wal_segments_ahead: 2
+      
+      hnsw_index:
+        m: 16
+        ef_construct: 100
+        full_scan_threshold: 10000
+        max_indexing_threads: 0
+        on_disk: true
+      
+      quantization:
+        scalar:
+          type: int8
+          quantile: 0.99
+          always_ram: true
+    
+    service:
+      grpc_port: 6334
+      http_port: 6333
+      max_request_size_mb: 32
+      max_workers: 0
+      
+    telemetry_disabled: false
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: qdrant
+  namespace: driftguard
+  labels:
+    app: qdrant
+spec:
+  serviceName: qdrant-headless
+  replicas: 3
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: qdrant
+  template:
+    metadata:
+      labels:
+        app: qdrant
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "6333"
+        prometheus.io/path: "/metrics"
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: qdrant
+            topologyKey: kubernetes.io/hostname
+      containers:
+      - name: qdrant
+        image: qdrant/qdrant:v1.7.4
+        command: ["./qdrant"]
+        args: ["--config-path", "/qdrant/config/config.yaml"]
+        ports:
+        - containerPort: 6333
+          name: http
+          protocol: TCP
+        - containerPort: 6334
+          name: grpc
+          protocol: TCP
+        - containerPort: 6335
+          name: p2p
+          protocol: TCP
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2000m"
+          limits:
+            memory: "8Gi"
+            cpu: "4000m"
+        env:
+        - name: QDRANT__CLUSTER__ENABLED
+          value: "true"
+        - name: QDRANT__CLUSTER__P2P__PORT
+          value: "6335"
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        volumeMounts:
+        - name: qdrant-storage
+          mountPath: /qdrant/storage
+        - name: qdrant-config
+          mountPath: /qdrant/config
+        - name: qdrant-snapshots
+          mountPath: /qdrant/snapshots
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 6333
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+        livenessProbe:
+          httpGet:
+            path: /livez
+            port: 6333
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+      volumes:
+      - name: qdrant-config
+        configMap:
+          name: qdrant-config
+  volumeClaimTemplates:
+  - metadata:
+      name: qdrant-storage
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: fast-ssd
+      resources:
+        requests:
+          storage: 100Gi
+  - metadata:
+      name: qdrant-snapshots
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: standard
+      resources:
+        requests:
+          storage: 50Gi
+---
+# Headless service for cluster discovery
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant-headless
+  namespace: driftguard
+  labels:
+    app: qdrant
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: qdrant
+  ports:
+  - port: 6335
+    targetPort: 6335
+    name: p2p
+    protocol: TCP
+---
+# Main service for client connections
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant
+  namespace: driftguard
+  labels:
+    app: qdrant
+spec:
+  type: ClusterIP
+  selector:
+    app: qdrant
+  ports:
+  - port: 6333
+    targetPort: 6333
+    name: http
+    protocol: TCP
+  - port: 6334
+    targetPort: 6334
+    name: grpc
+    protocol: TCP
+---
+# Pod Disruption Budget
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: qdrant-pdb
+  namespace: driftguard
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: qdrant

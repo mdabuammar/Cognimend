@@ -1,0 +1,225 @@
+# Redis Cluster Configuration for DriftGuard
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: driftguard
+data:
+  redis.conf: |
+    # Cluster mode
+    cluster-enabled yes
+    cluster-config-file nodes.conf
+    cluster-node-timeout 5000
+    cluster-require-full-coverage no
+    cluster-migration-barrier 1
+    
+    # Memory management
+    maxmemory 2gb
+    maxmemory-policy allkeys-lru
+    maxmemory-samples 10
+    
+    # Persistence (disabled for cache-only mode)
+    save ""
+    appendonly no
+    
+    # Performance
+    tcp-keepalive 300
+    timeout 0
+    tcp-backlog 511
+    
+    # Threading (Redis 6+)
+    io-threads 4
+    io-threads-do-reads yes
+    
+    # Security
+    protected-mode yes
+    
+    # Slow log
+    slowlog-log-slower-than 10000
+    slowlog-max-len 128
+    
+    # Client output buffer limits
+    client-output-buffer-limit normal 0 0 0
+    client-output-buffer-limit replica 256mb 64mb 60
+    client-output-buffer-limit pubsub 32mb 8mb 60
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-cluster
+  namespace: driftguard
+  labels:
+    app: redis-cluster
+spec:
+  serviceName: redis-cluster-headless
+  replicas: 6  # 3 masters + 3 replicas
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: redis-cluster
+  template:
+    metadata:
+      labels:
+        app: redis-cluster
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9121"
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: redis-cluster
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        command:
+        - redis-server
+        - /conf/redis.conf
+        - --cluster-announce-ip
+        - $(POD_IP)
+        ports:
+        - containerPort: 6379
+          name: client
+          protocol: TCP
+        - containerPort: 16379
+          name: gossip
+          protocol: TCP
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "1000m"
+        env:
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        volumeMounts:
+        - name: conf
+          mountPath: /conf
+        - name: data
+          mountPath: /data
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 15
+          periodSeconds: 10
+      - name: redis-exporter
+        image: oliver006/redis_exporter:latest
+        ports:
+        - containerPort: 9121
+          name: metrics
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+      volumes:
+      - name: conf
+        configMap:
+          name: redis-config
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+---
+# Headless service for cluster discovery
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cluster-headless
+  namespace: driftguard
+  labels:
+    app: redis-cluster
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: redis-cluster
+  ports:
+  - port: 6379
+    targetPort: 6379
+    name: client
+  - port: 16379
+    targetPort: 16379
+    name: gossip
+---
+# Main service for client connections
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cluster
+  namespace: driftguard
+  labels:
+    app: redis-cluster
+spec:
+  type: ClusterIP
+  selector:
+    app: redis-cluster
+  ports:
+  - port: 6379
+    targetPort: 6379
+    name: client
+---
+# Pod Disruption Budget
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: redis-cluster-pdb
+  namespace: driftguard
+spec:
+  minAvailable: 4
+  selector:
+    matchLabels:
+      app: redis-cluster
+---
+# Job to initialize cluster
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: redis-cluster-init
+  namespace: driftguard
+spec:
+  template:
+    spec:
+      containers:
+      - name: init
+        image: redis:7-alpine
+        command:
+        - sh
+        - -c
+        - |
+          echo "Waiting for Redis pods..."
+          sleep 30
+          
+          HOSTS=""
+          for i in $(seq 0 5); do
+            HOSTS="$HOSTS redis-cluster-$i.redis-cluster-headless:6379"
+          done
+          
+          echo "Creating cluster with: $HOSTS"
+          redis-cli --cluster create $HOSTS --cluster-replicas 1 --cluster-yes
+      restartPolicy: OnFailure
+  backoffLimit: 3

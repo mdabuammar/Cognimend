@@ -1,0 +1,74 @@
+# =============================================================================
+# DriftGuard Query Service - Multi-Stage Optimized Dockerfile
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Stage 1: Dependencies Builder
+# -----------------------------------------------------------------------------
+FROM python:3.11-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# -----------------------------------------------------------------------------
+# Stage 2: Production Runtime
+# -----------------------------------------------------------------------------
+FROM python:3.11-slim AS runtime
+
+ARG BUILD_VERSION=dev
+ARG BUILD_DATE=unknown
+ARG VCS_REF=unknown
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONFAULTHANDLER=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    SERVICE_NAME=query \
+    SERVICE_PORT=8002
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+RUN groupadd --gid 1000 appgroup \
+    && useradd --uid 1000 --gid appgroup --shell /bin/bash --create-home appuser
+
+COPY --from=builder /opt/venv /opt/venv
+
+COPY --chown=appuser:appgroup main.py ./
+# Copy shared modules if they exist in the build context
+COPY --chown=appuser:appgroup shared/ ./shared/
+
+USER appuser
+
+EXPOSE ${SERVICE_PORT}
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:${SERVICE_PORT}/health || exit 1
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8002", "--workers", "2"]
+
+LABEL org.opencontainers.image.title="DriftGuard Query Service" \
+    org.opencontainers.image.description="RAG Query Processing Service" \
+    org.opencontainers.image.version="${BUILD_VERSION}" \
+    org.opencontainers.image.created="${BUILD_DATE}" \
+    org.opencontainers.image.revision="${VCS_REF}" \
+    org.opencontainers.image.vendor="DriftGuard"

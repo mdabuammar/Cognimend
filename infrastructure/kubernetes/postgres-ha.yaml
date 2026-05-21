@@ -1,0 +1,415 @@
+# =============================================================================
+# PostgreSQL Read Replicas Configuration
+# =============================================================================
+# High availability PostgreSQL with streaming replication
+# =============================================================================
+
+# PostgreSQL Primary (Master)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-primary
+  namespace: driftguard-prod
+  labels:
+    app: postgres
+    role: primary
+spec:
+  serviceName: postgres-primary
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+      role: primary
+  template:
+    metadata:
+      labels:
+        app: postgres
+        role: primary
+    spec:
+      serviceAccountName: postgres
+      securityContext:
+        fsGroup: 999
+        runAsUser: 999
+        runAsNonRoot: true
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+              name: postgres
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: driftguard-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: driftguard-secrets
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              value: driftguard
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            # Replication settings
+            - name: POSTGRES_INITDB_ARGS
+              value: "--data-checksums"
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+            - name: postgres-config
+              mountPath: /etc/postgresql/postgresql.conf
+              subPath: postgresql.conf
+            - name: postgres-config
+              mountPath: /etc/postgresql/pg_hba.conf
+              subPath: pg_hba.conf
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 2000m
+              memory: 4Gi
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - $(POSTGRES_USER)
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - $(POSTGRES_USER)
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: postgres-config
+          configMap:
+            name: postgres-config
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: fast-ssd
+        resources:
+          requests:
+            storage: 100Gi
+
+---
+# PostgreSQL Read Replicas
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-replica
+  namespace: driftguard-prod
+  labels:
+    app: postgres
+    role: replica
+spec:
+  serviceName: postgres-replica
+  replicas: 2
+  selector:
+    matchLabels:
+      app: postgres
+      role: replica
+  template:
+    metadata:
+      labels:
+        app: postgres
+        role: replica
+    spec:
+      serviceAccountName: postgres
+      securityContext:
+        fsGroup: 999
+        runAsUser: 999
+        runAsNonRoot: true
+      initContainers:
+        - name: setup-replica
+          image: postgres:15-alpine
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Wait for primary to be ready
+              until pg_isready -h postgres-primary -U replicator; do
+                echo "Waiting for primary..."
+                sleep 2
+              done
+              
+              # If data directory is empty, run pg_basebackup
+              if [ ! -f /var/lib/postgresql/data/pgdata/PG_VERSION ]; then
+                echo "Running pg_basebackup..."
+                PGPASSWORD="${REPLICATION_PASSWORD}" pg_basebackup \
+                  -h postgres-primary \
+                  -U replicator \
+                  -D /var/lib/postgresql/data/pgdata \
+                  -Fp -Xs -P -R
+              fi
+          env:
+            - name: REPLICATION_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: driftguard-secrets
+                  key: REPLICATION_PASSWORD
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+              name: postgres
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: driftguard-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: driftguard-secrets
+                  key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+            - name: postgres-config
+              mountPath: /etc/postgresql/postgresql.conf
+              subPath: postgresql-replica.conf
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 2Gi
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - $(POSTGRES_USER)
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - pg_isready -U ${POSTGRES_USER} && test "$(psql -U ${POSTGRES_USER} -tAc 'SELECT pg_is_in_recovery()')" = "t"
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: postgres-config
+          configMap:
+            name: postgres-config
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: fast-ssd
+        resources:
+          requests:
+            storage: 100Gi
+
+---
+# PostgreSQL Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  namespace: driftguard-prod
+data:
+  postgresql.conf: |
+    # Connection settings
+    listen_addresses = '*'
+    max_connections = 200
+    
+    # Memory settings
+    shared_buffers = 1GB
+    effective_cache_size = 3GB
+    maintenance_work_mem = 256MB
+    work_mem = 16MB
+    
+    # WAL settings
+    wal_level = replica
+    max_wal_senders = 10
+    wal_keep_size = 1GB
+    archive_mode = on
+    archive_command = 'test ! -f /archive/%f && cp %p /archive/%f'
+    
+    # Replication settings
+    synchronous_commit = on
+    synchronous_standby_names = ''
+    hot_standby = on
+    
+    # Checkpoints
+    checkpoint_completion_target = 0.9
+    max_wal_size = 2GB
+    min_wal_size = 1GB
+    
+    # Logging
+    log_destination = 'stderr'
+    logging_collector = on
+    log_directory = 'pg_log'
+    log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
+    log_statement = 'ddl'
+    log_min_duration_statement = 1000
+    
+    # Performance
+    random_page_cost = 1.1
+    effective_io_concurrency = 200
+    default_statistics_target = 100
+  
+  postgresql-replica.conf: |
+    # Replica-specific settings
+    listen_addresses = '*'
+    max_connections = 200
+    hot_standby = on
+    hot_standby_feedback = on
+    
+    # Read-only settings
+    default_transaction_read_only = on
+    
+    # Connection to primary
+    primary_conninfo = 'host=postgres-primary port=5432 user=replicator password=${REPLICATION_PASSWORD}'
+    
+    # Recovery settings
+    recovery_target_timeline = 'latest'
+  
+  pg_hba.conf: |
+    # TYPE  DATABASE        USER            ADDRESS                 METHOD
+    local   all             all                                     trust
+    host    all             all             127.0.0.1/32            scram-sha-256
+    host    all             all             ::1/128                 scram-sha-256
+    host    all             all             10.0.0.0/8              scram-sha-256
+    host    replication     replicator      10.0.0.0/8              scram-sha-256
+
+---
+# Primary Service (read-write)
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-primary
+  namespace: driftguard-prod
+  labels:
+    app: postgres
+    role: primary
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+      name: postgres
+  selector:
+    app: postgres
+    role: primary
+
+---
+# Replica Service (read-only)
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-replica
+  namespace: driftguard-prod
+  labels:
+    app: postgres
+    role: replica
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+      name: postgres
+  selector:
+    app: postgres
+    role: replica
+
+---
+# Headless service for StatefulSet DNS
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-headless
+  namespace: driftguard-prod
+spec:
+  clusterIP: None
+  ports:
+    - port: 5432
+      name: postgres
+  selector:
+    app: postgres
+
+---
+# Service Account
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: postgres
+  namespace: driftguard-prod
+
+---
+# PodDisruptionBudget
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: postgres-pdb
+  namespace: driftguard-prod
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: postgres
+
+---
+# Replication monitoring PrometheusRule
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: postgres-replication-alerts
+  namespace: driftguard-prod
+spec:
+  groups:
+    - name: postgres.replication
+      rules:
+        - alert: PostgresReplicationLag
+          expr: |
+            pg_replication_lag > 30
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "PostgreSQL replication lag > 30 seconds"
+            description: "Replica {{ $labels.instance }} is {{ $value }}s behind primary"
+        
+        - alert: PostgresReplicaDown
+          expr: |
+            pg_up{role="replica"} == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "PostgreSQL replica is down"
+            description: "Replica {{ $labels.instance }} is not responding"
+        
+        - alert: PostgresNoReplicas
+          expr: |
+            count(pg_up{role="replica"} == 1) < 1
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "No PostgreSQL replicas available"
+            description: "All read replicas are down"

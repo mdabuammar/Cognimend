@@ -1,0 +1,450 @@
+# docker-compose.test.yml
+# Test environment for running integration and e2e tests
+# 
+# Usage:
+#   docker-compose -f docker-compose.test.yml up -d        # Start test infrastructure
+#   docker-compose -f docker-compose.test.yml run test     # Run all tests
+#   docker-compose -f docker-compose.test.yml down -v      # Cleanup
+#
+# This configuration provides:
+# - Isolated test databases (PostgreSQL, Qdrant, Redis)
+# - All microservices configured for testing
+# - Test runner with pytest
+
+version: '3.8'
+
+services:
+  # ===========================================================================
+  # Test Infrastructure
+  # ===========================================================================
+  
+  postgres-test:
+    image: postgres:15-alpine
+    container_name: cognimend-postgres-test
+    environment:
+      POSTGRES_DB: cognimend_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: testpassword
+    ports:
+      - "5433:5432"  # Different port to avoid conflicts
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+      - ./database/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d cognimend_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - test-network
+
+  qdrant-test:
+    image: qdrant/qdrant:v1.7.4
+    container_name: cognimend-qdrant-test
+    ports:
+      - "6334:6333"   # Different port for gRPC
+      - "6335:6334"   # Different port for HTTP
+    volumes:
+      - qdrant_test_data:/qdrant/storage
+    environment:
+      QDRANT__LOG_LEVEL: WARN
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:6333/readyz"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - test-network
+
+  redis-test:
+    image: redis:7-alpine
+    container_name: cognimend-redis-test
+    ports:
+      - "6380:6379"  # Different port to avoid conflicts
+    volumes:
+      - redis_test_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - test-network
+
+  # ===========================================================================
+  # Test Services
+  # ===========================================================================
+
+  upload-test:
+    build:
+      context: .
+      dockerfile: services/upload/Dockerfile
+    container_name: cognimend-upload-test
+    environment:
+      TESTING: "true"
+      POSTGRES_HOST: postgres-test
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: cognimend_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: testpassword
+      QDRANT_HOST: qdrant-test
+      QDRANT_PORT: "6333"
+      REDIS_HOST: redis-test
+      REDIS_PORT: "6379"
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-test-key}
+      OPENROUTER_PRESET: budget
+      LOG_LEVEL: WARNING
+      CORS_ORIGINS: "*"
+    ports:
+      - "8011:8001"
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      qdrant-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - test-network
+
+  query-test:
+    build:
+      context: .
+      dockerfile: services/query/Dockerfile
+    container_name: cognimend-query-test
+    environment:
+      TESTING: "true"
+      POSTGRES_HOST: postgres-test
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: cognimend_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: testpassword
+      QDRANT_HOST: qdrant-test
+      QDRANT_PORT: "6333"
+      REDIS_HOST: redis-test
+      REDIS_PORT: "6379"
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-test-key}
+      OPENROUTER_PRESET: budget
+      LOG_LEVEL: WARNING
+      CORS_ORIGINS: "*"
+      RATE_LIMIT: "1000"
+    ports:
+      - "8012:8002"
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      qdrant-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - test-network
+
+  telemetry-test:
+    build:
+      context: .
+      dockerfile: services/telemetry/Dockerfile
+    container_name: cognimend-telemetry-test
+    environment:
+      TESTING: "true"
+      POSTGRES_HOST: postgres-test
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: cognimend_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: testpassword
+      REDIS_HOST: redis-test
+      REDIS_PORT: "6379"
+      LOG_LEVEL: WARNING
+    ports:
+      - "8013:8003"
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - test-network
+
+  drift-detector-test:
+    build:
+      context: .
+      dockerfile: services/drift_detector/Dockerfile
+    container_name: cognimend-drift-detector-test
+    environment:
+      TESTING: "true"
+      POSTGRES_HOST: postgres-test
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: cognimend_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: testpassword
+      QDRANT_HOST: qdrant-test
+      QDRANT_PORT: "6333"
+      LOG_LEVEL: WARNING
+      DRIFT_THRESHOLD_CONFIDENCE: "0.1"
+      DRIFT_THRESHOLD_LATENCY: "25"
+    ports:
+      - "8014:8004"
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      telemetry-test:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - test-network
+
+  controller-test:
+    build:
+      context: .
+      dockerfile: services/controller/Dockerfile
+    container_name: cognimend-controller-test
+    environment:
+      TESTING: "true"
+      POSTGRES_HOST: postgres-test
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: cognimend_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: testpassword
+      REDIS_HOST: redis-test
+      REDIS_PORT: "6379"
+      LOG_LEVEL: WARNING
+      # Service URLs for health checking
+      UPLOAD_SERVICE_URL: http://upload-test:8001
+      QUERY_SERVICE_URL: http://query-test:8002
+      TELEMETRY_SERVICE_URL: http://telemetry-test:8003
+      DRIFT_DETECTOR_URL: http://drift-detector-test:8004
+      EVALUATION_SERVICE_URL: http://evaluation-test:8006
+    ports:
+      - "8015:8005"
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+      upload-test:
+        condition: service_healthy
+      query-test:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - test-network
+
+  evaluation-test:
+    build:
+      context: .
+      dockerfile: services/evaluation/Dockerfile
+    container_name: cognimend-evaluation-test
+    environment:
+      TESTING: "true"
+      POSTGRES_HOST: postgres-test
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: cognimend_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: testpassword
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-test-key}
+      LOG_LEVEL: WARNING
+    ports:
+      - "8016:8006"
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8006/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - test-network
+
+  # ===========================================================================
+  # Test Runner
+  # ===========================================================================
+
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: cognimend-test-runner
+    environment:
+      TESTING: "true"
+      POSTGRES_HOST: postgres-test
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: cognimend_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: testpassword
+      QDRANT_HOST: qdrant-test
+      QDRANT_PORT: "6333"
+      REDIS_HOST: redis-test
+      REDIS_PORT: "6379"
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-test-key}
+      # Test configuration
+      PYTEST_ARGS: ${PYTEST_ARGS:--v --cov=services --cov-report=xml --cov-report=html}
+    volumes:
+      - ./tests:/app/tests:ro
+      - ./services:/app/services:ro
+      - ./test-results:/app/test-results
+      - ./coverage:/app/coverage
+    depends_on:
+      upload-test:
+        condition: service_healthy
+      query-test:
+        condition: service_healthy
+      telemetry-test:
+        condition: service_healthy
+      drift-detector-test:
+        condition: service_healthy
+      controller-test:
+        condition: service_healthy
+    networks:
+      - test-network
+    command: >
+      sh -c "
+        echo 'Waiting for all services to be ready...' &&
+        sleep 5 &&
+        echo 'Running tests...' &&
+        pytest $$PYTEST_ARGS tests/ 
+          --junit-xml=/app/test-results/junit.xml
+          --cov-report=xml:/app/coverage/coverage.xml
+          --cov-report=html:/app/coverage/html
+      "
+
+  # ===========================================================================
+  # Unit Tests Only (No infrastructure needed)
+  # ===========================================================================
+
+  test-unit:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: cognimend-test-unit
+    environment:
+      TESTING: "true"
+      PYTEST_ARGS: "-v -m unit --cov=services --cov-report=term-missing"
+    volumes:
+      - ./tests:/app/tests:ro
+      - ./services:/app/services:ro
+      - ./test-results:/app/test-results
+    networks:
+      - test-network
+    command: pytest $$PYTEST_ARGS tests/unit/
+
+  # ===========================================================================
+  # Integration Tests
+  # ===========================================================================
+
+  test-integration:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: cognimend-test-integration
+    environment:
+      TESTING: "true"
+      POSTGRES_HOST: postgres-test
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: cognimend_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: testpassword
+      QDRANT_HOST: qdrant-test
+      QDRANT_PORT: "6333"
+      REDIS_HOST: redis-test
+      REDIS_PORT: "6379"
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-test-key}
+      PYTEST_ARGS: "-v -m integration"
+    volumes:
+      - ./tests:/app/tests:ro
+      - ./services:/app/services:ro
+      - ./test-results:/app/test-results
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      qdrant-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    networks:
+      - test-network
+    command: pytest $$PYTEST_ARGS tests/integration/
+
+  # ===========================================================================
+  # E2E Tests
+  # ===========================================================================
+
+  test-e2e:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: cognimend-test-e2e
+    environment:
+      TESTING: "true"
+      POSTGRES_HOST: postgres-test
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: cognimend_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: testpassword
+      QDRANT_HOST: qdrant-test
+      QDRANT_PORT: "6333"
+      REDIS_HOST: redis-test
+      REDIS_PORT: "6379"
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-test-key}
+      UPLOAD_SERVICE_URL: http://upload-test:8001
+      QUERY_SERVICE_URL: http://query-test:8002
+      PYTEST_ARGS: "-v -m e2e"
+    volumes:
+      - ./tests:/app/tests:ro
+      - ./services:/app/services:ro
+      - ./test-results:/app/test-results
+    depends_on:
+      upload-test:
+        condition: service_healthy
+      query-test:
+        condition: service_healthy
+      controller-test:
+        condition: service_healthy
+    networks:
+      - test-network
+    command: pytest $$PYTEST_ARGS tests/e2e/
+
+# ===========================================================================
+# Networks
+# ===========================================================================
+
+networks:
+  test-network:
+    driver: bridge
+    name: cognimend-test-network
+
+# ===========================================================================
+# Volumes
+# ===========================================================================
+
+volumes:
+  postgres_test_data:
+    name: cognimend-postgres-test-data
+  qdrant_test_data:
+    name: cognimend-qdrant-test-data
+  redis_test_data:
+    name: cognimend-redis-test-data

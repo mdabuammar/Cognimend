@@ -1,0 +1,42 @@
+# Production replica count patch
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: driftguard-controller-blue
+spec:
+  replicas: 3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: driftguard-controller-green
+spec:
+  replicas: 1
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: driftguard-query
+spec:
+  replicas: 3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: driftguard-upload
+spec:
+  replicas: 2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: driftguard-evaluation
+spec:
+  replicas: 2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: driftguard-drift
+spec:
+  replicas: 2

@@ -1,0 +1,914 @@
+openapi: 3.1.0
+info:
+  title: DriftGuard API
+  description: |
+    DriftGuard is a production-ready RAG (Retrieval-Augmented Generation) platform 
+    for document management, semantic search, and AI-powered question answering.
+    
+    ## Features
+    - Document upload and processing
+    - Semantic search with vector embeddings
+    - AI-powered Q&A with streaming responses
+    - Drift detection for model monitoring
+    - Comprehensive evaluation metrics
+    
+    ## Authentication
+    All endpoints require API key authentication via the `X-API-Key` header.
+    
+    ## Rate Limiting
+    - Standard tier: 100 requests/minute
+    - Premium tier: 1000 requests/minute
+    
+    ## Error Handling
+    All errors follow RFC 7807 Problem Details format.
+  version: 2.0.0
+  contact:
+    name: DriftGuard Team
+    email: api-support@driftguard.io
+    url: https://docs.driftguard.io
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  x-logo:
+    url: https://driftguard.io/logo.png
+
+servers:
+  - url: https://api.driftguard.io/v2
+    description: Production API
+  - url: https://staging-api.driftguard.io/v2
+    description: Staging API
+  - url: http://localhost:8005
+    description: Local Development
+
+tags:
+  - name: Documents
+    description: Document upload, management, and retrieval
+  - name: Query
+    description: Semantic search and AI-powered Q&A
+  - name: Evaluation
+    description: Response quality evaluation
+  - name: Drift Detection
+    description: Model drift monitoring
+  - name: Health
+    description: Service health and status
+  - name: Telemetry
+    description: Metrics and observability
+
+security:
+  - ApiKeyAuth: []
+
+paths:
+  # =========================================================================
+  # DOCUMENT ENDPOINTS
+  # =========================================================================
+  /documents:
+    get:
+      summary: List all documents
+      description: Retrieve a paginated list of all uploaded documents with metadata.
+      operationId: listDocuments
+      tags:
+        - Documents
+      parameters:
+        - $ref: '#/components/parameters/pageParam'
+        - $ref: '#/components/parameters/limitParam'
+        - $ref: '#/components/parameters/sortParam'
+        - name: status
+          in: query
+          description: Filter by document processing status
+          schema:
+            type: string
+            enum: [pending, processing, completed, failed]
+      responses:
+        '200':
+          description: Successfully retrieved document list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentListResponse'
+              example:
+                documents:
+                  - id: "doc_abc123"
+                    filename: "handbook.pdf"
+                    status: "completed"
+                    chunk_count: 42
+                    created_at: "2024-01-15T10:30:00Z"
+                pagination:
+                  page: 1
+                  limit: 20
+                  total: 150
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+
+  /upload:
+    post:
+      summary: Upload a document
+      description: |
+        Upload a document for processing and indexing. Supported formats:
+        - PDF (.pdf)
+        - Text (.txt)
+        - Markdown (.md)
+        - Word (.docx)
+        - CSV (.csv)
+        
+        Maximum file size: 50MB
+      operationId: uploadDocument
+      tags:
+        - Documents
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The document file to upload
+                metadata:
+                  type: object
+                  description: Optional metadata for the document
+                  properties:
+                    tags:
+                      type: array
+                      items:
+                        type: string
+                    category:
+                      type: string
+                chunk_size:
+                  type: integer
+                  default: 512
+                  description: Token size for document chunking
+                chunk_overlap:
+                  type: integer
+                  default: 50
+                  description: Overlap between chunks
+      responses:
+        '202':
+          description: Document accepted for processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadResponse'
+              example:
+                document_id: "doc_abc123"
+                status: "processing"
+                message: "Document queued for processing"
+                estimated_time: 30
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '413':
+          description: File too large
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '415':
+          description: Unsupported file type
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /documents/{documentId}:
+    get:
+      summary: Get document details
+      description: Retrieve detailed information about a specific document.
+      operationId: getDocument
+      tags:
+        - Documents
+      parameters:
+        - $ref: '#/components/parameters/documentIdParam'
+      responses:
+        '200':
+          description: Document details retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      summary: Delete a document
+      description: Permanently delete a document and all its chunks.
+      operationId: deleteDocument
+      tags:
+        - Documents
+      parameters:
+        - $ref: '#/components/parameters/documentIdParam'
+      responses:
+        '204':
+          description: Document deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /documents/{documentId}/chunks:
+    get:
+      summary: Get document chunks
+      description: Retrieve all chunks for a specific document.
+      operationId: getDocumentChunks
+      tags:
+        - Documents
+      parameters:
+        - $ref: '#/components/parameters/documentIdParam'
+        - $ref: '#/components/parameters/pageParam'
+        - $ref: '#/components/parameters/limitParam'
+      responses:
+        '200':
+          description: Chunks retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChunkListResponse'
+
+  # =========================================================================
+  # QUERY ENDPOINTS
+  # =========================================================================
+  /query:
+    post:
+      summary: Ask a question
+      description: |
+        Submit a natural language question to query the document corpus.
+        Returns an AI-generated answer with source citations.
+      operationId: queryDocuments
+      tags:
+        - Query
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryRequest'
+            example:
+              question: "What is the company's vacation policy?"
+              top_k: 5
+              filters:
+                document_ids: ["doc_abc123"]
+              include_sources: true
+      responses:
+        '200':
+          description: Query processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryResponse'
+              example:
+                answer: "According to the employee handbook, employees receive 20 days of paid vacation per year..."
+                sources:
+                  - document_id: "doc_abc123"
+                    chunk_id: "chunk_42"
+                    content: "Vacation Policy: All full-time employees..."
+                    score: 0.95
+                confidence: 0.87
+                processing_time_ms: 523
+
+  /query/stream:
+    post:
+      summary: Ask a question (streaming)
+      description: |
+        Submit a question and receive the answer as a server-sent event stream.
+        Ideal for real-time UI updates.
+      operationId: queryDocumentsStream
+      tags:
+        - Query
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryRequest'
+      responses:
+        '200':
+          description: Streaming response
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: Server-sent events with answer chunks
+
+  /search:
+    post:
+      summary: Semantic search
+      description: Perform semantic similarity search across documents.
+      operationId: semanticSearch
+      tags:
+        - Query
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+
+  # =========================================================================
+  # EVALUATION ENDPOINTS
+  # =========================================================================
+  /evaluate:
+    post:
+      summary: Evaluate response quality
+      description: |
+        Evaluate the quality of an AI-generated response using multiple metrics:
+        - Relevance
+        - Faithfulness
+        - Coherence
+        - Completeness
+      operationId: evaluateResponse
+      tags:
+        - Evaluation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EvaluationRequest'
+      responses:
+        '200':
+          description: Evaluation completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluationResponse'
+
+  /evaluate/batch:
+    post:
+      summary: Batch evaluation
+      description: Evaluate multiple responses in a single request.
+      operationId: batchEvaluate
+      tags:
+        - Evaluation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                evaluations:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/EvaluationRequest'
+      responses:
+        '200':
+          description: Batch evaluation completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/EvaluationResponse'
+
+  # =========================================================================
+  # DRIFT DETECTION ENDPOINTS
+  # =========================================================================
+  /drift/detect:
+    post:
+      summary: Detect embedding drift
+      description: Analyze embedding distribution for potential drift.
+      operationId: detectDrift
+      tags:
+        - Drift Detection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DriftDetectionRequest'
+      responses:
+        '200':
+          description: Drift analysis completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DriftDetectionResponse'
+
+  /drift/status:
+    get:
+      summary: Get drift status
+      description: Get current drift detection status and history.
+      operationId: getDriftStatus
+      tags:
+        - Drift Detection
+      responses:
+        '200':
+          description: Drift status retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DriftStatusResponse'
+
+  # =========================================================================
+  # HEALTH ENDPOINTS
+  # =========================================================================
+  /health:
+    get:
+      summary: Health check
+      description: Check the health status of all services.
+      operationId: healthCheck
+      tags:
+        - Health
+      security: []
+      responses:
+        '200':
+          description: All services healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: One or more services unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /health/ready:
+    get:
+      summary: Readiness check
+      description: Check if the service is ready to accept traffic.
+      operationId: readinessCheck
+      tags:
+        - Health
+      security: []
+      responses:
+        '200':
+          description: Service ready
+        '503':
+          description: Service not ready
+
+  /health/live:
+    get:
+      summary: Liveness check
+      description: Check if the service is alive.
+      operationId: livenessCheck
+      tags:
+        - Health
+      security: []
+      responses:
+        '200':
+          description: Service alive
+
+  # =========================================================================
+  # TELEMETRY ENDPOINTS
+  # =========================================================================
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      description: Get Prometheus-formatted metrics.
+      operationId: getMetrics
+      tags:
+        - Telemetry
+      security: []
+      responses:
+        '200':
+          description: Metrics in Prometheus format
+          content:
+            text/plain:
+              schema:
+                type: string
+
+components:
+  # =========================================================================
+  # SECURITY SCHEMES
+  # =========================================================================
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for authentication
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token authentication
+
+  # =========================================================================
+  # PARAMETERS
+  # =========================================================================
+  parameters:
+    documentIdParam:
+      name: documentId
+      in: path
+      required: true
+      description: Unique document identifier
+      schema:
+        type: string
+        pattern: '^doc_[a-zA-Z0-9]+$'
+    pageParam:
+      name: page
+      in: query
+      description: Page number for pagination
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    limitParam:
+      name: limit
+      in: query
+      description: Number of items per page
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    sortParam:
+      name: sort
+      in: query
+      description: Sort order
+      schema:
+        type: string
+        enum: [created_at, -created_at, name, -name]
+        default: -created_at
+
+  # =========================================================================
+  # SCHEMAS
+  # =========================================================================
+  schemas:
+    # Document schemas
+    Document:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique document identifier
+        filename:
+          type: string
+          description: Original filename
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        chunk_count:
+          type: integer
+          description: Number of chunks created
+        file_size:
+          type: integer
+          description: File size in bytes
+        content_type:
+          type: string
+          description: MIME type
+        metadata:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DocumentListResponse:
+      type: object
+      properties:
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/Document'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    UploadResponse:
+      type: object
+      properties:
+        document_id:
+          type: string
+        status:
+          type: string
+        message:
+          type: string
+        estimated_time:
+          type: integer
+          description: Estimated processing time in seconds
+
+    ChunkListResponse:
+      type: object
+      properties:
+        chunks:
+          type: array
+          items:
+            $ref: '#/components/schemas/Chunk'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    Chunk:
+      type: object
+      properties:
+        id:
+          type: string
+        document_id:
+          type: string
+        content:
+          type: string
+        token_count:
+          type: integer
+        position:
+          type: integer
+
+    # Query schemas
+    QueryRequest:
+      type: object
+      required:
+        - question
+      properties:
+        question:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: The question to ask
+        top_k:
+          type: integer
+          minimum: 1
+          maximum: 20
+          default: 5
+          description: Number of source chunks to retrieve
+        filters:
+          type: object
+          properties:
+            document_ids:
+              type: array
+              items:
+                type: string
+            tags:
+              type: array
+              items:
+                type: string
+        include_sources:
+          type: boolean
+          default: true
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+          default: 0.7
+
+    QueryResponse:
+      type: object
+      properties:
+        answer:
+          type: string
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceChunk'
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        processing_time_ms:
+          type: integer
+        tokens_used:
+          type: integer
+
+    SourceChunk:
+      type: object
+      properties:
+        document_id:
+          type: string
+        chunk_id:
+          type: string
+        content:
+          type: string
+        score:
+          type: number
+        metadata:
+          type: object
+
+    SearchRequest:
+      type: object
+      required:
+        - query
+      properties:
+        query:
+          type: string
+        top_k:
+          type: integer
+          default: 10
+        filters:
+          type: object
+
+    SearchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceChunk'
+        total:
+          type: integer
+
+    # Evaluation schemas
+    EvaluationRequest:
+      type: object
+      required:
+        - question
+        - answer
+        - context
+      properties:
+        question:
+          type: string
+        answer:
+          type: string
+        context:
+          type: array
+          items:
+            type: string
+        expected_answer:
+          type: string
+
+    EvaluationResponse:
+      type: object
+      properties:
+        overall_score:
+          type: number
+          minimum: 0
+          maximum: 1
+        metrics:
+          type: object
+          properties:
+            relevance:
+              type: number
+            faithfulness:
+              type: number
+            coherence:
+              type: number
+            completeness:
+              type: number
+        feedback:
+          type: string
+
+    # Drift detection schemas
+    DriftDetectionRequest:
+      type: object
+      properties:
+        document_ids:
+          type: array
+          items:
+            type: string
+        time_range:
+          type: object
+          properties:
+            start:
+              type: string
+              format: date-time
+            end:
+              type: string
+              format: date-time
+
+    DriftDetectionResponse:
+      type: object
+      properties:
+        drift_detected:
+          type: boolean
+        drift_score:
+          type: number
+        details:
+          type: object
+        recommendations:
+          type: array
+          items:
+            type: string
+
+    DriftStatusResponse:
+      type: object
+      properties:
+        current_status:
+          type: string
+          enum: [stable, warning, critical]
+        last_check:
+          type: string
+          format: date-time
+        history:
+          type: array
+          items:
+            type: object
+
+    # Health schemas
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        version:
+          type: string
+        uptime:
+          type: integer
+        components:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status:
+                type: string
+              latency_ms:
+                type: number
+
+    # Common schemas
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+        pages:
+          type: integer
+
+    Error:
+      type: object
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        trace_id:
+          type: string
+
+  # =========================================================================
+  # RESPONSES
+  # =========================================================================
+  responses:
+    BadRequest:
+      description: Bad request - invalid input
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            type: "https://api.driftguard.io/errors/bad-request"
+            title: "Bad Request"
+            status: 400
+            detail: "The request body is missing required field 'question'"
+            trace_id: "abc123"
+
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            type: "https://api.driftguard.io/errors/unauthorized"
+            title: "Unauthorized"
+            status: 401
+            detail: "Missing or invalid API key"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            type: "https://api.driftguard.io/errors/not-found"
+            title: "Not Found"
+            status: 404
+            detail: "Document with ID 'doc_xyz' not found"
+
+    RateLimitExceeded:
+      description: Rate limit exceeded
+      headers:
+        X-RateLimit-Limit:
+          schema:
+            type: integer
+        X-RateLimit-Remaining:
+          schema:
+            type: integer
+        X-RateLimit-Reset:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            type: "https://api.driftguard.io/errors/rate-limit"
+            title: "Rate Limit Exceeded"
+            status: 429
+            detail: "You have exceeded the rate limit. Please retry after 60 seconds."

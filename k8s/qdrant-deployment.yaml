@@ -1,0 +1,127 @@
+# =============================================================================
+# Qdrant Vector Database Deployment and Service
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qdrant
+  namespace: cognimend
+  labels:
+    app.kubernetes.io/name: qdrant
+    app.kubernetes.io/component: vector-database
+    app.kubernetes.io/part-of: cognimend
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "6333"
+    prometheus.io/path: "/metrics"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: qdrant
+      app.kubernetes.io/component: vector-database
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: qdrant
+        app.kubernetes.io/component: vector-database
+        app.kubernetes.io/part-of: cognimend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "6333"
+        prometheus.io/path: "/metrics"
+    spec:
+      securityContext:
+        fsGroup: 1000
+        runAsUser: 1000
+        runAsNonRoot: true
+      
+      containers:
+        - name: qdrant
+          image: qdrant/qdrant:v1.7.4
+          imagePullPolicy: IfNotPresent
+          
+          ports:
+            - name: http
+              containerPort: 6333
+              protocol: TCP
+            - name: grpc
+              containerPort: 6334
+              protocol: TCP
+          
+          env:
+            - name: QDRANT__SERVICE__GRPC_PORT
+              value: "6334"
+            - name: QDRANT__SERVICE__HTTP_PORT
+              value: "6333"
+            - name: QDRANT__CLUSTER__ENABLED
+              value: "false"
+            - name: QDRANT__STORAGE__STORAGE_PATH
+              value: "/qdrant/storage"
+            - name: QDRANT__TELEMETRY_DISABLED
+              value: "true"
+          
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          
+          volumeMounts:
+            - name: qdrant-data
+              mountPath: /qdrant/storage
+      
+      volumes:
+        - name: qdrant-data
+          persistentVolumeClaim:
+            claimName: qdrant-pvc
+
+---
+# =============================================================================
+# Qdrant Service
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant
+  namespace: cognimend
+  labels:
+    app.kubernetes.io/name: qdrant
+    app.kubernetes.io/component: vector-database
+    app.kubernetes.io/part-of: cognimend
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 6333
+      targetPort: 6333
+      protocol: TCP
+    - name: grpc
+      port: 6334
+      targetPort: 6334
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: qdrant
+    app.kubernetes.io/component: vector-database

@@ -1,0 +1,419 @@
+# =============================================================================
+# Database Backup and Disaster Recovery Configuration
+# =============================================================================
+# Implements automated backups, point-in-time recovery, and DR procedures
+# =============================================================================
+
+# PostgreSQL Backup CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: driftguard-prod
+  labels:
+    app: driftguard
+    component: backup
+spec:
+  schedule: "0 */6 * * *"  # Every 6 hours
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      template:
+        metadata:
+          labels:
+            app: driftguard
+            component: backup
+        spec:
+          serviceAccountName: driftguard-backup
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            fsGroup: 1000
+          containers:
+            - name: backup
+              image: postgres:15-alpine
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+                  BACKUP_FILE="/backups/driftguard_${TIMESTAMP}.sql.gz"
+                  
+                  echo "Starting backup at $(date)"
+                  
+                  # Create backup with pg_dump
+                  PGPASSWORD="${POSTGRES_PASSWORD}" pg_dump \
+                    -h "${POSTGRES_HOST}" \
+                    -U "${POSTGRES_USER}" \
+                    -d "${POSTGRES_DB}" \
+                    --format=custom \
+                    --compress=9 \
+                    --no-owner \
+                    --no-privileges \
+                    | gzip > "${BACKUP_FILE}"
+                  
+                  # Calculate checksum
+                  sha256sum "${BACKUP_FILE}" > "${BACKUP_FILE}.sha256"
+                  
+                  # Upload to S3
+                  aws s3 cp "${BACKUP_FILE}" "s3://${S3_BUCKET}/backups/postgres/${TIMESTAMP}/"
+                  aws s3 cp "${BACKUP_FILE}.sha256" "s3://${S3_BUCKET}/backups/postgres/${TIMESTAMP}/"
+                  
+                  echo "Backup completed successfully: ${BACKUP_FILE}"
+                  
+                  # Cleanup old local backups (keep last 3)
+                  ls -t /backups/*.sql.gz 2>/dev/null | tail -n +4 | xargs -r rm
+                  
+                  # Verify backup integrity
+                  echo "Verifying backup integrity..."
+                  gunzip -t "${BACKUP_FILE}" && echo "Backup integrity verified"
+              env:
+                - name: POSTGRES_HOST
+                  value: "postgres"
+                - name: POSTGRES_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: driftguard-secrets
+                      key: POSTGRES_USER
+                - name: POSTGRES_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: driftguard-secrets
+                      key: POSTGRES_PASSWORD
+                - name: POSTGRES_DB
+                  value: "driftguard"
+                - name: S3_BUCKET
+                  valueFrom:
+                    configMapKeyRef:
+                      name: driftguard-backup-config
+                      key: S3_BUCKET
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: driftguard-aws-secrets
+                      key: access_key_id
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: driftguard-aws-secrets
+                      key: secret_access_key
+                - name: AWS_DEFAULT_REGION
+                  value: "us-east-1"
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /backups
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+          restartPolicy: OnFailure
+          volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: postgres-backup-pvc
+            - name: tmp
+              emptyDir: {}
+
+---
+# Backup storage PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-backup-pvc
+  namespace: driftguard-prod
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 50Gi
+
+---
+# Backup configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: driftguard-backup-config
+  namespace: driftguard-prod
+data:
+  S3_BUCKET: "driftguard-backups"
+  RETENTION_DAYS: "30"
+  BACKUP_ENCRYPTION: "AES256"
+  ENABLE_PITR: "true"
+
+---
+# WAL archiving for Point-in-Time Recovery
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-wal-config
+  namespace: driftguard-prod
+data:
+  postgresql.conf: |
+    # WAL Configuration for PITR
+    wal_level = replica
+    archive_mode = on
+    archive_command = 'aws s3 cp %p s3://driftguard-backups/wal-archive/%f'
+    archive_timeout = 300
+    
+    # Replication settings
+    max_wal_senders = 5
+    wal_keep_size = 1GB
+    
+    # Recovery settings
+    restore_command = 'aws s3 cp s3://driftguard-backups/wal-archive/%f %p'
+    recovery_target_timeline = 'latest'
+
+---
+# Redis Backup CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: redis-backup
+  namespace: driftguard-prod
+  labels:
+    app: driftguard
+    component: backup
+spec:
+  schedule: "30 */6 * * *"  # Every 6 hours, 30 minutes after postgres
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: driftguard-backup
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+          containers:
+            - name: backup
+              image: redis:7-alpine
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+                  
+                  # Trigger Redis BGSAVE
+                  redis-cli -h redis -a "${REDIS_PASSWORD}" BGSAVE
+                  
+                  # Wait for save to complete
+                  while [ "$(redis-cli -h redis -a "${REDIS_PASSWORD}" LASTSAVE)" == "$(cat /tmp/lastsave 2>/dev/null)" ]; do
+                    sleep 1
+                  done
+                  redis-cli -h redis -a "${REDIS_PASSWORD}" LASTSAVE > /tmp/lastsave
+                  
+                  # Copy RDB file
+                  redis-cli -h redis -a "${REDIS_PASSWORD}" --rdb /backups/redis_${TIMESTAMP}.rdb
+                  
+                  # Upload to S3
+                  aws s3 cp "/backups/redis_${TIMESTAMP}.rdb" "s3://${S3_BUCKET}/backups/redis/${TIMESTAMP}/"
+                  
+                  echo "Redis backup completed: redis_${TIMESTAMP}.rdb"
+              env:
+                - name: REDIS_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: driftguard-secrets
+                      key: REDIS_PASSWORD
+                - name: S3_BUCKET
+                  valueFrom:
+                    configMapKeyRef:
+                      name: driftguard-backup-config
+                      key: S3_BUCKET
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /backups
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 200m
+                  memory: 256Mi
+          restartPolicy: OnFailure
+          volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: redis-backup-pvc
+
+---
+# Redis backup PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-backup-pvc
+  namespace: driftguard-prod
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+# Backup Service Account
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: driftguard-backup
+  namespace: driftguard-prod
+  labels:
+    app: driftguard
+    component: backup
+
+---
+# Qdrant Backup CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: qdrant-backup
+  namespace: driftguard-prod
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: driftguard-backup
+          containers:
+            - name: backup
+              image: curlimages/curl:latest
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+                  
+                  # Create Qdrant snapshot
+                  curl -X POST "http://qdrant:6333/collections/documents/snapshots"
+                  
+                  # List and download latest snapshot
+                  SNAPSHOT=$(curl -s "http://qdrant:6333/collections/documents/snapshots" | jq -r '.result[-1].name')
+                  curl -o "/backups/qdrant_${TIMESTAMP}.snapshot" \
+                    "http://qdrant:6333/collections/documents/snapshots/${SNAPSHOT}"
+                  
+                  # Upload to S3
+                  aws s3 cp "/backups/qdrant_${TIMESTAMP}.snapshot" \
+                    "s3://${S3_BUCKET}/backups/qdrant/${TIMESTAMP}/"
+                  
+                  echo "Qdrant backup completed"
+              env:
+                - name: S3_BUCKET
+                  valueFrom:
+                    configMapKeyRef:
+                      name: driftguard-backup-config
+                      key: S3_BUCKET
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /backups
+          restartPolicy: OnFailure
+          volumes:
+            - name: backup-storage
+              emptyDir: {}
+
+---
+# Backup cleanup job (retention policy)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup-cleanup
+  namespace: driftguard-prod
+spec:
+  schedule: "0 4 * * 0"  # Weekly on Sunday at 4 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: driftguard-backup
+          containers:
+            - name: cleanup
+              image: amazon/aws-cli:latest
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  # Delete backups older than retention period
+                  RETENTION_DATE=$(date -d "-${RETENTION_DAYS} days" +%Y-%m-%d)
+                  
+                  aws s3 ls "s3://${S3_BUCKET}/backups/" --recursive \
+                    | awk -v date="${RETENTION_DATE}" '$1 < date {print $4}' \
+                    | xargs -I {} aws s3 rm "s3://${S3_BUCKET}/{}"
+                  
+                  echo "Cleanup completed for backups older than ${RETENTION_DAYS} days"
+              env:
+                - name: S3_BUCKET
+                  valueFrom:
+                    configMapKeyRef:
+                      name: driftguard-backup-config
+                      key: S3_BUCKET
+                - name: RETENTION_DAYS
+                  valueFrom:
+                    configMapKeyRef:
+                      name: driftguard-backup-config
+                      key: RETENTION_DAYS
+          restartPolicy: OnFailure
+
+---
+# Backup monitoring and alerting
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: backup-alerts
+  namespace: driftguard-prod
+spec:
+  groups:
+    - name: backup.rules
+      rules:
+        - alert: PostgresBackupFailed
+          expr: |
+            kube_job_status_failed{job_name=~"postgres-backup.*"} > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "PostgreSQL backup job failed"
+            description: "The PostgreSQL backup job has failed. Check backup logs immediately."
+            runbook_url: "https://docs.driftguard.io/runbooks/backup-recovery"
+        
+        - alert: BackupTooOld
+          expr: |
+            time() - max(kube_job_status_completion_time{job_name=~"postgres-backup.*"}) > 86400
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "PostgreSQL backup is more than 24 hours old"
+            description: "No successful backup in the last 24 hours. Investigate backup jobs."
+        
+        - alert: BackupStorageNearlyFull
+          expr: |
+            kubelet_volume_stats_available_bytes{persistentvolumeclaim="postgres-backup-pvc"} 
+            / kubelet_volume_stats_capacity_bytes{persistentvolumeclaim="postgres-backup-pvc"} < 0.2
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Backup storage is nearly full"
+            description: "Less than 20% storage available for backups. Consider cleanup or expansion."

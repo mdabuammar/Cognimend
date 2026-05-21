@@ -1,0 +1,192 @@
+# DriftGuard API Deployment with Horizontal Pod Autoscaler
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: driftguard-api
+  namespace: driftguard
+  labels:
+    app: driftguard
+    component: api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: driftguard
+      component: api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 2
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: driftguard
+        component: api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8001"
+        prometheus.io/path: "/metrics"
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: driftguard
+                  component: api
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: api
+        image: driftguard/api:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8001
+          name: http
+          protocol: TCP
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: driftguard-secrets
+              key: database_url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: driftguard-secrets
+              key: redis_url
+        - name: QDRANT_URL
+          valueFrom:
+            configMapKeyRef:
+              name: driftguard-config
+              key: qdrant_url
+        - name: OPENROUTER_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: driftguard-secrets
+              key: openrouter_api_key
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 10"]
+      terminationGracePeriodSeconds: 30
+---
+# API Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: driftguard-api
+  namespace: driftguard
+  labels:
+    app: driftguard
+    component: api
+spec:
+  type: ClusterIP
+  selector:
+    app: driftguard
+    component: api
+  ports:
+  - port: 8001
+    targetPort: 8001
+    protocol: TCP
+    name: http
+---
+# Horizontal Pod Autoscaler
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: driftguard-api-hpa
+  namespace: driftguard
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: driftguard-api
+  minReplicas: 3
+  maxReplicas: 50
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: Pods
+    pods:
+      metric:
+        name: http_requests_per_second
+      target:
+        type: AverageValue
+        averageValue: "100"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Pods
+        value: 4
+        periodSeconds: 60
+      - type: Percent
+        value: 100
+        periodSeconds: 60
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+      selectPolicy: Min
+---
+# Pod Disruption Budget
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: driftguard-api-pdb
+  namespace: driftguard
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: driftguard
+      component: api

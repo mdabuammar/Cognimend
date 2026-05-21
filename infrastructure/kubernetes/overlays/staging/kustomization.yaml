@@ -1,0 +1,36 @@
+# =============================================================================
+# Staging Environment Overlay
+# =============================================================================
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: driftguard-staging
+
+resources:
+  - ../../
+
+namePrefix: staging-
+
+commonLabels:
+  environment: staging
+
+patches:
+  - path: replica-patch.yaml
+  - path: resources-patch.yaml
+
+configMapGenerator:
+  - name: driftguard-config
+    behavior: merge
+    literals:
+      - ENVIRONMENT=staging
+      - LOG_LEVEL=DEBUG
+      - ENABLE_DEBUG=true
+
+images:
+  - name: ghcr.io/driftguard/controller
+    newTag: develop
+  - name: ghcr.io/driftguard/query
+    newTag: develop
+  - name: ghcr.io/driftguard/upload
+    newTag: develop

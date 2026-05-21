@@ -1,0 +1,51 @@
+# Production resource limits patch
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: driftguard-controller-blue
+spec:
+  template:
+    spec:
+      containers:
+        - name: controller
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "2000m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: driftguard-query
+spec:
+  template:
+    spec:
+      containers:
+        - name: query
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "2000m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: driftguard-upload
+spec:
+  template:
+    spec:
+      containers:
+        - name: upload
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"

@@ -1,0 +1,219 @@
+# =============================================================================
+# DriftGuard Blue-Green Deployment Configuration
+# =============================================================================
+# This file defines the blue-green deployment strategy for DriftGuard services.
+# Both blue and green deployments run simultaneously, with traffic switched via service.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: driftguard-controller-blue
+  namespace: driftguard-prod
+  labels:
+    app: driftguard-controller
+    version: blue
+    component: api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: driftguard-controller
+      version: blue
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: driftguard-controller
+        version: blue
+        component: api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8005"
+        prometheus.io/path: "/metrics"
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: driftguard-controller
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: controller
+          image: ghcr.io/driftguard/controller:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8005
+              name: http
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          envFrom:
+            - configMapRef:
+                name: driftguard-config
+            - secretRef:
+                name: driftguard-secrets
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: DEPLOYMENT_VERSION
+              value: "blue"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8005
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8005
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: driftguard-controller
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: driftguard-controller-green
+  namespace: driftguard-prod
+  labels:
+    app: driftguard-controller
+    version: green
+    component: api
+spec:
+  replicas: 1  # Scaled down when not active
+  selector:
+    matchLabels:
+      app: driftguard-controller
+      version: green
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: driftguard-controller
+        version: green
+        component: api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8005"
+        prometheus.io/path: "/metrics"
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: driftguard-controller
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: controller
+          image: ghcr.io/driftguard/controller:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8005
+              name: http
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          envFrom:
+            - configMapRef:
+                name: driftguard-config
+            - secretRef:
+                name: driftguard-secrets
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: DEPLOYMENT_VERSION
+              value: "green"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8005
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8005
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+
+---
+# Service that switches between blue and green
+apiVersion: v1
+kind: Service
+metadata:
+  name: driftguard-api
+  namespace: driftguard-prod
+  labels:
+    app: driftguard
+    component: api
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 8005
+      protocol: TCP
+      name: http
+  selector:
+    app: driftguard-controller
+    version: blue  # Switch this to "green" for blue-green deployment
+
+---
+# Pod Disruption Budget
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: driftguard-controller-pdb
+  namespace: driftguard-prod
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: driftguard-controller

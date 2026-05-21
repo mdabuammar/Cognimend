@@ -1,0 +1,37 @@
+# Core Framework
+fastapi>=0.109.1
+uvicorn[standard]>=0.27.1
+pydantic>=2.5.3
+python-multipart>=0.0.6
+
+# LLM & Vector Store
+openai>=1.12.0
+qdrant-client>=1.7.3
+tiktoken>=0.5.2
+
+# Document Processing
+PyPDF2>=3.0.1
+python-docx>=1.1.0
+Pillow>=10.2.0
+pytesseract>=0.3.10
+
+# Database & Cache
+psycopg2-binary>=2.9.9
+redis>=5.0.1
+
+# HTTP
+aiohttp>=3.9.1
+
+# Configuration
+python-dotenv>=1.0.0
+
+# Resilience
+tenacity>=8.2.3
+
+# Observability
+opentelemetry-api>=1.22.0
+opentelemetry-sdk>=1.22.0
+opentelemetry-instrumentation-fastapi>=0.43b0
+opentelemetry-exporter-jaeger>=1.21.0
+prometheus-client>=0.19.0
+requests

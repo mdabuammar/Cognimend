@@ -1,0 +1,43 @@
+# =============================================================================
+# PostgreSQL PersistentVolume and PersistentVolumeClaim
+# =============================================================================
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: postgres-pv
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/component: storage
+    type: local
+spec:
+  storageClassName: standard
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  # For cloud providers, use appropriate storage class
+  # For local development, use hostPath
+  hostPath:
+    path: /data/postgres
+    type: DirectoryOrCreate
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: cognimend
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/component: storage
+spec:
+  storageClassName: standard
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres

@@ -1,0 +1,168 @@
+# =============================================================================
+# Vertical Pod Autoscaler Configuration
+# =============================================================================
+# VPA automatically adjusts resource requests based on actual usage
+# =============================================================================
+
+# VPA for Controller Service
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: driftguard-controller-vpa
+  namespace: driftguard-prod
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: driftguard-controller
+  updatePolicy:
+    updateMode: "Auto"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: controller
+        minAllowed:
+          cpu: 100m
+          memory: 256Mi
+        maxAllowed:
+          cpu: 4000m
+          memory: 8Gi
+        controlledResources: ["cpu", "memory"]
+        controlledValues: RequestsAndLimits
+
+---
+# VPA for Query Service
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: driftguard-query-vpa
+  namespace: driftguard-prod
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: driftguard-query
+  updatePolicy:
+    updateMode: "Auto"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: query
+        minAllowed:
+          cpu: 100m
+          memory: 256Mi
+        maxAllowed:
+          cpu: 2000m
+          memory: 4Gi
+
+---
+# VPA for Upload Service
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: driftguard-upload-vpa
+  namespace: driftguard-prod
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: driftguard-upload
+  updatePolicy:
+    updateMode: "Auto"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: upload
+        minAllowed:
+          cpu: 100m
+          memory: 512Mi
+        maxAllowed:
+          cpu: 2000m
+          memory: 4Gi
+
+---
+# VPA for Evaluation Service
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: driftguard-evaluation-vpa
+  namespace: driftguard-prod
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: driftguard-evaluation
+  updatePolicy:
+    updateMode: "Auto"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: evaluation
+        minAllowed:
+          cpu: 50m
+          memory: 128Mi
+        maxAllowed:
+          cpu: 1000m
+          memory: 2Gi
+
+---
+# VPA for Drift Detector Service
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: driftguard-drift-vpa
+  namespace: driftguard-prod
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: driftguard-drift-detector
+  updatePolicy:
+    updateMode: "Auto"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: drift-detector
+        minAllowed:
+          cpu: 50m
+          memory: 128Mi
+        maxAllowed:
+          cpu: 1000m
+          memory: 2Gi
+
+---
+# VPA for Telemetry Service
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: driftguard-telemetry-vpa
+  namespace: driftguard-prod
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: driftguard-telemetry
+  updatePolicy:
+    updateMode: "Auto"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: telemetry
+        minAllowed:
+          cpu: 50m
+          memory: 128Mi
+        maxAllowed:
+          cpu: 500m
+          memory: 1Gi
+
+---
+# VPA Recommender Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vpa-recommender-config
+  namespace: kube-system
+data:
+  config.yaml: |
+    # VPA Recommender settings
+    recommendationMarginFraction: 0.15
+    podMinCPUMillicores: 25
+    podMinMemoryMb: 64
+    targetCPUPercentile: 0.9
+    targetMemoryPercentile: 0.9
+    safetyMarginFraction: 0.15
+    minReplicas: 2

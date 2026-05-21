@@ -1,0 +1,1205 @@
+{
+  "generated_at": "2026-04-24T01:06:35.512432",
+  "target_confidence": 82.0,
+  "total_loops": 3,
+  "best_loop": {
+    "loop": 1,
+    "top_k": 5,
+    "uploads": {
+      "success": 10,
+      "total": 10
+    },
+    "avg_confidence": 0.0,
+    "met_min_confidence": 0,
+    "above_80_pct": 0,
+    "total_queries": 30,
+    "successful_queries": 0,
+    "avg_latency_ms": 0,
+    "elapsed_seconds": 364,
+    "per_topic": {
+      "HR": 0.0,
+      "AI": 0.0,
+      "SEC": 0.0,
+      "FIN": 0.0,
+      "ENG": 0.0,
+      "MED": 0.0,
+      "LEG": 0.0,
+      "SUP": 0.0,
+      "PROD": 0.0,
+      "DS": 0.0
+    },
+    "query_results": [
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "What is the vacation and annual leave policy?",
+        "min_conf": 78,
+        "topic": "HR"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "How many sick leave days do employees receive per year?",
+        "min_conf": 78,
+        "topic": "HR"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "What are the remote work requirements and core hours?",
+        "min_conf": 75,
+        "topic": "HR"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "How does a RAG system work and what are its components?",
+        "min_conf": 72,
+        "topic": "AI"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "What embedding models are recommended for RAG retrieval?",
+        "min_conf": 70,
+        "topic": "AI"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "How does autonomous drift detection work in AI systems?",
+        "min_conf": 70,
+        "topic": "AI"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "What are the password and authentication requirements?",
+        "min_conf": 75,
+        "topic": "SEC"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "How are security incidents reported and handled?",
+        "min_conf": 73,
+        "topic": "SEC"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "What are the data classification levels?",
+        "min_conf": 75,
+        "topic": "SEC"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "What is the expense reimbursement process and limits?",
+        "min_conf": 72,
+        "topic": "FIN"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "How are invoices processed and payment terms set?",
+        "min_conf": 70,
+        "topic": "FIN"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "What financial reporting standards are followed?",
+        "min_conf": 70,
+        "topic": "FIN"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "What are the code review requirements and standards?",
+        "min_conf": 75,
+        "topic": "ENG"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "What testing strategy and coverage is required?",
+        "min_conf": 73,
+        "topic": "ENG"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "How does the CI/CD pipeline and deployment work?",
+        "min_conf": 72,
+        "topic": "ENG"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "How do telemedicine appointments work?",
+        "min_conf": 70,
+        "topic": "MED"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "What HIPAA compliance measures protect patient data?",
+        "min_conf": 70,
+        "topic": "MED"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "How does the AI clinical decision support system work?",
+        "min_conf": 68,
+        "topic": "MED"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "What is the contract management and approval process?",
+        "min_conf": 70,
+        "topic": "LEG"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "What GDPR compliance requirements are followed?",
+        "min_conf": 70,
+        "topic": "LEG"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "What are the anti-corruption and gift policies?",
+        "min_conf": 72,
+        "topic": "LEG"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "What are the customer support SLA response times?",
+        "min_conf": 75,
+        "topic": "SUP"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "How does the customer onboarding process work?",
+        "min_conf": 73,
+        "topic": "SUP"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "How is customer feedback used for product improvement?",
+        "min_conf": 70,
+        "topic": "SUP"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "How does the agile sprint development process work?",
+        "min_conf": 73,
+        "topic": "PROD"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "What is the feature development lifecycle?",
+        "min_conf": 72,
+        "topic": "PROD"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "How are product metrics measured and reviewed?",
+        "min_conf": 70,
+        "topic": "PROD"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "How are machine learning models developed and deployed?",
+        "min_conf": 70,
+        "topic": "DS"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "What data pipeline architecture is used?",
+        "min_conf": 70,
+        "topic": "DS"
+      },
+      {
+        "success": false,
+        "confidence": 0,
+        "latency_ms": 0,
+        "citations": 0,
+        "question": "What statistical methods are used for A/B testing?",
+        "min_conf": 68,
+        "topic": "DS"
+      }
+    ]
+  },
+  "all_loops": [
+    {
+      "loop": 1,
+      "top_k": 5,
+      "uploads": {
+        "success": 10,
+        "total": 10
+      },
+      "avg_confidence": 0.0,
+      "met_min_confidence": 0,
+      "above_80_pct": 0,
+      "total_queries": 30,
+      "successful_queries": 0,
+      "avg_latency_ms": 0,
+      "elapsed_seconds": 364,
+      "per_topic": {
+        "HR": 0.0,
+        "AI": 0.0,
+        "SEC": 0.0,
+        "FIN": 0.0,
+        "ENG": 0.0,
+        "MED": 0.0,
+        "LEG": 0.0,
+        "SUP": 0.0,
+        "PROD": 0.0,
+        "DS": 0.0
+      },
+      "query_results": [
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What is the vacation and annual leave policy?",
+          "min_conf": 78,
+          "topic": "HR"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How many sick leave days do employees receive per year?",
+          "min_conf": 78,
+          "topic": "HR"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What are the remote work requirements and core hours?",
+          "min_conf": 75,
+          "topic": "HR"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How does a RAG system work and what are its components?",
+          "min_conf": 72,
+          "topic": "AI"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What embedding models are recommended for RAG retrieval?",
+          "min_conf": 70,
+          "topic": "AI"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How does autonomous drift detection work in AI systems?",
+          "min_conf": 70,
+          "topic": "AI"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What are the password and authentication requirements?",
+          "min_conf": 75,
+          "topic": "SEC"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How are security incidents reported and handled?",
+          "min_conf": 73,
+          "topic": "SEC"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What are the data classification levels?",
+          "min_conf": 75,
+          "topic": "SEC"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What is the expense reimbursement process and limits?",
+          "min_conf": 72,
+          "topic": "FIN"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How are invoices processed and payment terms set?",
+          "min_conf": 70,
+          "topic": "FIN"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What financial reporting standards are followed?",
+          "min_conf": 70,
+          "topic": "FIN"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What are the code review requirements and standards?",
+          "min_conf": 75,
+          "topic": "ENG"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What testing strategy and coverage is required?",
+          "min_conf": 73,
+          "topic": "ENG"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How does the CI/CD pipeline and deployment work?",
+          "min_conf": 72,
+          "topic": "ENG"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How do telemedicine appointments work?",
+          "min_conf": 70,
+          "topic": "MED"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What HIPAA compliance measures protect patient data?",
+          "min_conf": 70,
+          "topic": "MED"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How does the AI clinical decision support system work?",
+          "min_conf": 68,
+          "topic": "MED"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What is the contract management and approval process?",
+          "min_conf": 70,
+          "topic": "LEG"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What GDPR compliance requirements are followed?",
+          "min_conf": 70,
+          "topic": "LEG"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What are the anti-corruption and gift policies?",
+          "min_conf": 72,
+          "topic": "LEG"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What are the customer support SLA response times?",
+          "min_conf": 75,
+          "topic": "SUP"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How does the customer onboarding process work?",
+          "min_conf": 73,
+          "topic": "SUP"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How is customer feedback used for product improvement?",
+          "min_conf": 70,
+          "topic": "SUP"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How does the agile sprint development process work?",
+          "min_conf": 73,
+          "topic": "PROD"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What is the feature development lifecycle?",
+          "min_conf": 72,
+          "topic": "PROD"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How are product metrics measured and reviewed?",
+          "min_conf": 70,
+          "topic": "PROD"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How are machine learning models developed and deployed?",
+          "min_conf": 70,
+          "topic": "DS"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What data pipeline architecture is used?",
+          "min_conf": 70,
+          "topic": "DS"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What statistical methods are used for A/B testing?",
+          "min_conf": 68,
+          "topic": "DS"
+        }
+      ]
+    },
+    {
+      "loop": 2,
+      "top_k": 7,
+      "uploads": {
+        "success": 10,
+        "total": 10,
+        "reused": true
+      },
+      "avg_confidence": 0.0,
+      "met_min_confidence": 0,
+      "above_80_pct": 0,
+      "total_queries": 30,
+      "successful_queries": 0,
+      "avg_latency_ms": 0,
+      "elapsed_seconds": 260,
+      "per_topic": {
+        "HR": 0.0,
+        "AI": 0.0,
+        "SEC": 0.0,
+        "FIN": 0.0,
+        "ENG": 0.0,
+        "MED": 0.0,
+        "LEG": 0.0,
+        "SUP": 0.0,
+        "PROD": 0.0,
+        "DS": 0.0
+      },
+      "query_results": [
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What is the vacation and annual leave policy?",
+          "min_conf": 78,
+          "topic": "HR"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How many sick leave days do employees receive per year?",
+          "min_conf": 78,
+          "topic": "HR"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What are the remote work requirements and core hours?",
+          "min_conf": 75,
+          "topic": "HR"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How does a RAG system work and what are its components?",
+          "min_conf": 72,
+          "topic": "AI"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What embedding models are recommended for RAG retrieval?",
+          "min_conf": 70,
+          "topic": "AI"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How does autonomous drift detection work in AI systems?",
+          "min_conf": 70,
+          "topic": "AI"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What are the password and authentication requirements?",
+          "min_conf": 75,
+          "topic": "SEC"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How are security incidents reported and handled?",
+          "min_conf": 73,
+          "topic": "SEC"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What are the data classification levels?",
+          "min_conf": 75,
+          "topic": "SEC"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What is the expense reimbursement process and limits?",
+          "min_conf": 72,
+          "topic": "FIN"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How are invoices processed and payment terms set?",
+          "min_conf": 70,
+          "topic": "FIN"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What financial reporting standards are followed?",
+          "min_conf": 70,
+          "topic": "FIN"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What are the code review requirements and standards?",
+          "min_conf": 75,
+          "topic": "ENG"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What testing strategy and coverage is required?",
+          "min_conf": 73,
+          "topic": "ENG"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How does the CI/CD pipeline and deployment work?",
+          "min_conf": 72,
+          "topic": "ENG"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How do telemedicine appointments work?",
+          "min_conf": 70,
+          "topic": "MED"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What HIPAA compliance measures protect patient data?",
+          "min_conf": 70,
+          "topic": "MED"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How does the AI clinical decision support system work?",
+          "min_conf": 68,
+          "topic": "MED"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What is the contract management and approval process?",
+          "min_conf": 70,
+          "topic": "LEG"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What GDPR compliance requirements are followed?",
+          "min_conf": 70,
+          "topic": "LEG"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What are the anti-corruption and gift policies?",
+          "min_conf": 72,
+          "topic": "LEG"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What are the customer support SLA response times?",
+          "min_conf": 75,
+          "topic": "SUP"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How does the customer onboarding process work?",
+          "min_conf": 73,
+          "topic": "SUP"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How is customer feedback used for product improvement?",
+          "min_conf": 70,
+          "topic": "SUP"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How does the agile sprint development process work?",
+          "min_conf": 73,
+          "topic": "PROD"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What is the feature development lifecycle?",
+          "min_conf": 72,
+          "topic": "PROD"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How are product metrics measured and reviewed?",
+          "min_conf": 70,
+          "topic": "PROD"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How are machine learning models developed and deployed?",
+          "min_conf": 70,
+          "topic": "DS"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What data pipeline architecture is used?",
+          "min_conf": 70,
+          "topic": "DS"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What statistical methods are used for A/B testing?",
+          "min_conf": 68,
+          "topic": "DS"
+        }
+      ]
+    },
+    {
+      "loop": 3,
+      "top_k": 8,
+      "uploads": {
+        "success": 10,
+        "total": 10,
+        "reused": true
+      },
+      "avg_confidence": 0.0,
+      "met_min_confidence": 0,
+      "above_80_pct": 0,
+      "total_queries": 30,
+      "successful_queries": 0,
+      "avg_latency_ms": 0,
+      "elapsed_seconds": 254,
+      "per_topic": {
+        "HR": 0.0,
+        "AI": 0.0,
+        "SEC": 0.0,
+        "FIN": 0.0,
+        "ENG": 0.0,
+        "MED": 0.0,
+        "LEG": 0.0,
+        "SUP": 0.0,
+        "PROD": 0.0,
+        "DS": 0.0
+      },
+      "query_results": [
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What is the vacation and annual leave policy?",
+          "min_conf": 78,
+          "topic": "HR"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How many sick leave days do employees receive per year?",
+          "min_conf": 78,
+          "topic": "HR"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What are the remote work requirements and core hours?",
+          "min_conf": 75,
+          "topic": "HR"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How does a RAG system work and what are its components?",
+          "min_conf": 72,
+          "topic": "AI"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What embedding models are recommended for RAG retrieval?",
+          "min_conf": 70,
+          "topic": "AI"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How does autonomous drift detection work in AI systems?",
+          "min_conf": 70,
+          "topic": "AI"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What are the password and authentication requirements?",
+          "min_conf": 75,
+          "topic": "SEC"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How are security incidents reported and handled?",
+          "min_conf": 73,
+          "topic": "SEC"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What are the data classification levels?",
+          "min_conf": 75,
+          "topic": "SEC"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What is the expense reimbursement process and limits?",
+          "min_conf": 72,
+          "topic": "FIN"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How are invoices processed and payment terms set?",
+          "min_conf": 70,
+          "topic": "FIN"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What financial reporting standards are followed?",
+          "min_conf": 70,
+          "topic": "FIN"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What are the code review requirements and standards?",
+          "min_conf": 75,
+          "topic": "ENG"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What testing strategy and coverage is required?",
+          "min_conf": 73,
+          "topic": "ENG"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How does the CI/CD pipeline and deployment work?",
+          "min_conf": 72,
+          "topic": "ENG"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How do telemedicine appointments work?",
+          "min_conf": 70,
+          "topic": "MED"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What HIPAA compliance measures protect patient data?",
+          "min_conf": 70,
+          "topic": "MED"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How does the AI clinical decision support system work?",
+          "min_conf": 68,
+          "topic": "MED"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What is the contract management and approval process?",
+          "min_conf": 70,
+          "topic": "LEG"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What GDPR compliance requirements are followed?",
+          "min_conf": 70,
+          "topic": "LEG"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What are the anti-corruption and gift policies?",
+          "min_conf": 72,
+          "topic": "LEG"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What are the customer support SLA response times?",
+          "min_conf": 75,
+          "topic": "SUP"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How does the customer onboarding process work?",
+          "min_conf": 73,
+          "topic": "SUP"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How is customer feedback used for product improvement?",
+          "min_conf": 70,
+          "topic": "SUP"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How does the agile sprint development process work?",
+          "min_conf": 73,
+          "topic": "PROD"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What is the feature development lifecycle?",
+          "min_conf": 72,
+          "topic": "PROD"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How are product metrics measured and reviewed?",
+          "min_conf": 70,
+          "topic": "PROD"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "How are machine learning models developed and deployed?",
+          "min_conf": 70,
+          "topic": "DS"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What data pipeline architecture is used?",
+          "min_conf": 70,
+          "topic": "DS"
+        },
+        {
+          "success": false,
+          "confidence": 0,
+          "latency_ms": 0,
+          "citations": 0,
+          "question": "What statistical methods are used for A/B testing?",
+          "min_conf": 68,
+          "topic": "DS"
+        }
+      ]
+    }
+  ]
+}

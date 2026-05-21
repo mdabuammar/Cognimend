@@ -1,0 +1,34 @@
+# Staging resource limits patch (reduced for cost)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: driftguard-controller
+spec:
+  template:
+    spec:
+      containers:
+        - name: controller
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: driftguard-query
+spec:
+  template:
+    spec:
+      containers:
+        - name: query
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"

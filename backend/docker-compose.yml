@@ -1,0 +1,502 @@
+version: '3.8'
+
+services:
+  # ==================== DB MIGRATION ====================
+
+  db-migrate:
+    image: postgres:15-alpine
+    container_name: cognimend-db-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-password123}
+    volumes:
+      - ../database/migrations:/migrations:ro
+    command: >
+      sh -c "
+        psql -h postgres -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-cognimend} -f /migrations/001_initial_schema.sql &&
+        psql -h postgres -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-cognimend} -f /migrations/002_performance_indexes.sql &&
+        psql -h postgres -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-cognimend} -f /migrations/003_scaling_optimizations.sql &&
+        psql -h postgres -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-cognimend} -f /migrations/004_saas_schema.sql &&
+        psql -h postgres -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-cognimend} -f /migrations/005_rag_quality_layer.sql
+      "
+    networks:
+      - cognimend-network
+    restart: on-failure
+  # ==================== INFRASTRUCTURE ====================
+  
+  postgres:
+    image: postgres:15-alpine
+    container_name: cognimend-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cognimend}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password123}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cognimend-network
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: cognimend-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "ps aux | grep qdrant | grep -v grep || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - cognimend-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: cognimend-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cognimend-network
+
+  # ==================== DISTRIBUTED TRACING (Priority 5) ====================
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: cognimend-jaeger
+    environment:
+      - COLLECTOR_ZIPKIN_HTTP_PORT=9411
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "6831:6831/udp"  # Jaeger agent
+      - "16686:16686"    # Jaeger UI
+      - "14268:14268"    # Collector
+      - "14250:14250"    # gRPC
+    networks:
+      - cognimend-network
+    restart: unless-stopped
+
+  # ==================== MESSAGE QUEUE (Priority 6: Event-Driven) ====================
+
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: cognimend-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    ports:
+      - "5672:5672"     # AMQP
+      - "15672:15672"   # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cognimend-network
+    restart: unless-stopped
+
+  # ==================== MONITORING ====================
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: cognimend-prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    networks:
+      - cognimend-network
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: cognimend-grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - cognimend-network
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+  # ==================== APPLICATION SERVICES ====================
+
+  auth:
+    build:
+      context: .
+      dockerfile: services/auth/Dockerfile
+    container_name: cognimend-auth
+    ports:
+      - "8000:8000"
+    environment:
+      - CORS_ORIGINS=http://localhost:8080,http://localhost:5173,http://localhost:3000
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-cognimend}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password123}
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-change-refresh-secret-too}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:8080}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI:-http://localhost:8000/auth/google/callback}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import requests; requests.get('http://localhost:8000/health').raise_for_status()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - cognimend-network
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: .
+      dockerfile: services/gateway/Dockerfile
+    container_name: cognimend-gateway
+    ports:
+      - "8007:8080"
+    environment:
+      - CORS_ORIGINS=http://localhost:8080,http://localhost:5173,http://localhost:3000
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-cognimend}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password123}
+      - AUTH_SERVICE_URL=http://auth:8000
+      - UPLOAD_SERVICE_URL=http://upload:8001
+      - QUERY_SERVICE_URL=http://query:8002
+      - TELEMETRY_SERVICE_URL=http://telemetry:8003
+      - DRIFT_DETECTOR_URL=http://drift-detector:8004
+      - CONTROLLER_URL=http://controller:8005
+      - EVALUATION_URL=http://evaluation:8006
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-internal-dev-token}
+      - MAX_UPLOAD_BYTES=${MAX_UPLOAD_BYTES:-52428800}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      - STRIPE_PRICE_PERSONAL=${STRIPE_PRICE_PERSONAL:-}
+      - STRIPE_PRICE_TEAM=${STRIPE_PRICE_TEAM:-}
+      - STRIPE_PRICE_BUSINESS=${STRIPE_PRICE_BUSINESS:-}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:8080}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import requests; requests.get('http://localhost:8080/health').raise_for_status()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+      upload:
+        condition: service_healthy
+      query:
+        condition: service_healthy
+    networks:
+      - cognimend-network
+    restart: unless-stopped
+
+
+  # ==================== APPLICATION SERVICES ====================
+
+  upload:
+    build:
+      context: .
+      dockerfile: services/upload/Dockerfile
+    container_name: cognimend-upload
+    ports:
+      - "8001:8001"
+    environment:
+      - CORS_ORIGINS=http://localhost:8080,http://localhost:5173,http://localhost:3000
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_PRESET=${OPENROUTER_PRESET:-balanced}
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-cognimend}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password123}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      - JAEGER_HOST=jaeger
+      - JAEGER_PORT=6831
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-internal-dev-token}
+      - API_KEY_REQUIRED=true
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import requests; requests.get('http://localhost:8001/health').raise_for_status()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - cognimend-network
+    restart: unless-stopped
+
+  query:
+    build:
+      context: .
+      dockerfile: services/query/Dockerfile
+    container_name: cognimend-query
+    ports:
+      - "8002:8002"
+    environment:
+      - CORS_ORIGINS=http://localhost:8080,http://localhost:5173,http://localhost:3000
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_PRESET=${OPENROUTER_PRESET:-balanced}
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-cognimend}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password123}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JAEGER_HOST=jaeger
+      - JAEGER_PORT=6831
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-internal-dev-token}
+      - API_KEY_REQUIRED=true
+      - FAITHFULNESS_VERIFIER_MODE=${FAITHFULNESS_VERIFIER_MODE:-normal}
+      - VERIFIER_TIMEOUT_SECONDS=${VERIFIER_TIMEOUT_SECONDS:-12}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import requests; requests.get('http://localhost:8002/health').raise_for_status()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+    networks:
+      - cognimend-network
+    restart: unless-stopped
+
+  telemetry:
+    build:
+      context: ./services/telemetry
+      dockerfile: Dockerfile
+    container_name: cognimend-telemetry
+    ports:
+      - "8003:8003"
+    environment:
+      - CORS_ORIGINS=http://localhost:8080,http://localhost:5173,http://localhost:3000
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-cognimend}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password123}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JAEGER_HOST=jaeger
+      - JAEGER_PORT=6831
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-internal-dev-token}
+      - API_KEY_REQUIRED=true
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import requests; requests.get('http://localhost:8003/health').raise_for_status()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+    networks:
+      - cognimend-network
+    restart: unless-stopped
+
+  drift_detector:
+    build:
+      context: ./services/drift_detector
+      dockerfile: Dockerfile
+    container_name: cognimend-drift-detector
+    ports:
+      - "8004:8004"
+    environment:
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-cognimend}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password123}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JAEGER_HOST=jaeger
+      - JAEGER_PORT=6831
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-internal-dev-token}
+      - API_KEY_REQUIRED=true
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import requests; requests.get('http://localhost:8004/health').raise_for_status()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+    networks:
+      - cognimend-network
+    restart: unless-stopped
+
+  controller:
+    build:
+      context: ./services/controller
+      dockerfile: Dockerfile
+    container_name: cognimend-controller
+    ports:
+      - "8005:8005"
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_PRESET=${OPENROUTER_PRESET:-balanced}
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-cognimend}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password123}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JAEGER_HOST=jaeger
+      - JAEGER_PORT=6831
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import requests; requests.get('http://localhost:8005/health').raise_for_status()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      drift_detector:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+    networks:
+      - cognimend-network
+    restart: unless-stopped
+
+  evaluation:
+    build:
+      context: ./services/evaluation
+      dockerfile: Dockerfile
+    container_name: cognimend-evaluation
+    ports:
+      - "8006:8006"
+    environment:
+      - QUERY_SERVICE_URL=http://query:8002
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-cognimend}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password123}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JAEGER_HOST=jaeger
+      - JAEGER_PORT=6831
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import requests; requests.get('http://localhost:8006/health').raise_for_status()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      query:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+    networks:
+      - cognimend-network
+    restart: unless-stopped
+
+# ==================== NETWORKS ====================
+
+networks:
+  cognimend-network:
+    driver: bridge
+
+# ==================== VOLUMES ====================
+
+volumes:
+  postgres_data:
+    driver: local
+  qdrant_data:
+    driver: local
+  redis_data:
+    driver: local
+  rabbitmq_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local

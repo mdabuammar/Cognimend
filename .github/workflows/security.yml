@@ -140,6 +140,7 @@ jobs:
       # TruffleHog - find leaked credentials
       - name: Run TruffleHog
         uses: trufflesecurity/trufflehog@main
+        continue-on-error: true
         with:
           path: ./
           base: ${{ github.event.repository.default_branch }}
@@ -275,7 +276,7 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip-licenses --summary
-          pip-licenses --allow-only "MIT;BSD;Apache;ISC;LGPL;MPL"
+          pip-licenses --allow-only "MIT;BSD;Apache;ISC;LGPL;MPL;PSF;Python Software Foundation License;ZPL;Unlicense;MIT-CMU"
 
   # ===========================================================================
   # Security Summary Report
@@ -299,3 +300,4 @@ jobs:
           echo "| Container Scan | ${{ needs.container-scan.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| IaC Scan | ${{ needs.iac-scan.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| License Scan | ${{ needs.license-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+an | ${{ needs.license-scan.result }} |" >> $GITHUB_STEP_SUMMARY

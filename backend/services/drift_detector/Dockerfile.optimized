@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-COPY requirements.txt .
+COPY services/drift_detector/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # -----------------------------------------------------------------------------
@@ -53,9 +53,9 @@ RUN groupadd --gid 1000 appgroup \
 
 COPY --from=builder /opt/venv /opt/venv
 
-COPY --chown=appuser:appgroup main.py ./
+COPY --chown=appuser:appgroup services/drift_detector/main.py ./
 # Copy shared modules if they exist in the build context
-COPY --chown=appuser:appgroup shared/ ./shared/
+COPY --chown=appuser:appgroup services/shared/ ./shared/
 
 USER appuser
 

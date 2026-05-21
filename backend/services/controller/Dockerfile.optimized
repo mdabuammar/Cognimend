@@ -27,7 +27,7 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Copy and install dependencies
-COPY requirements.txt .
+COPY services/controller/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # -----------------------------------------------------------------------------
@@ -91,3 +91,4 @@ LABEL org.opencontainers.image.title="DriftGuard Controller Service" \
     org.opencontainers.image.revision="${VCS_REF}" \
     org.opencontainers.image.vendor="DriftGuard" \
     org.opencontainers.image.source="https://github.com/driftguard/backend"
+ackend"

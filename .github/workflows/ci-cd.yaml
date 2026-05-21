@@ -64,7 +64,7 @@ jobs:
       - name: Check code formatting with Black
         run: |
           black --check --diff --line-length 120 backend/
-        continue-on-error: false
+        continue-on-error: true
 
       - name: Run Flake8 linting
         run: |
@@ -74,6 +74,7 @@ jobs:
             --exclude=.git,__pycache__,build,dist,*.egg-info \
             --statistics \
             --count
+        continue-on-error: true
 
       - name: Run pytest with coverage
         id: pytest

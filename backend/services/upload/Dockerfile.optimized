@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-COPY requirements.txt .
+COPY services/upload/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # -----------------------------------------------------------------------------
@@ -75,3 +75,4 @@ LABEL org.opencontainers.image.title="DriftGuard Upload Service" \
     org.opencontainers.image.created="${BUILD_DATE}" \
     org.opencontainers.image.revision="${VCS_REF}" \
     org.opencontainers.image.vendor="DriftGuard"
+tGuard"

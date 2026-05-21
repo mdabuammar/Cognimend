@@ -59,7 +59,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
           pip install -r backend/tests/requirements-test.txt
-          pip install black flake8 pytest pytest-cov pytest-asyncio httpx
+          pip install black flake8
 
       - name: Check code formatting with Black
         run: |
@@ -475,7 +475,6 @@ jobs:
         run: |
           pip install -r backend/requirements.txt
           pip install -r backend/tests/requirements-test.txt
-          pip install pytest pytest-asyncio httpx aiohttp
 
       - name: Configure kubeconfig
         run: |
@@ -637,3 +636,4 @@ jobs:
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+: INCOMING_WEBHOOK

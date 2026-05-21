@@ -53,7 +53,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
           pip install -r backend/tests/requirements-test.txt
-          pip install pytest pytest-cov pytest-asyncio pytest-timeout pytest-xdist httpx
 
       - name: Run unit tests with coverage
         id: test
@@ -170,7 +169,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
           pip install -r backend/tests/requirements-test.txt
-          pip install pytest pytest-asyncio httpx aiohttp
 
       - name: Wait for services
         run: |
@@ -255,7 +253,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
           pip install -r backend/tests/requirements-test.txt
-          pip install pytest pytest-asyncio httpx playwright
+          pip install playwright
 
       - name: Install Playwright browsers
         run: playwright install chromium
@@ -480,7 +478,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
           pip install -r backend/tests/requirements-test.txt
-          pip install schemathesis pytest httpx
+          pip install schemathesis
 
       - name: Create contract test file
         run: |
@@ -727,7 +725,6 @@ jobs:
       - name: Run security tests
         id: test
         run: |
-          pip install httpx pytest
           pytest security_tests.py \
             -v \
             --tb=short \
@@ -923,3 +920,4 @@ jobs:
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+YPE: INCOMING_WEBHOOK
